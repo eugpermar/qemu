@@ -16,8 +16,6 @@ struct vhost_inflight {
 };
 
 struct vhost_virtqueue {
-    int kick;
-    int call;
     void *desc;
     void *avail;
     void *used;
