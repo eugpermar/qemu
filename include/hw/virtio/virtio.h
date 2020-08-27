@@ -46,8 +46,6 @@ typedef struct VirtIOFeature {
 size_t virtio_feature_get_config_size(VirtIOFeature *features,
                                       uint64_t host_features);
 
-typedef struct VirtQueue VirtQueue;
-
 #define VIRTQUEUE_MAX_SIZE 1024
 
 typedef struct VirtQueueElement
@@ -62,6 +60,108 @@ typedef struct VirtQueueElement
     struct iovec *in_sg;
     struct iovec *out_sg;
 } VirtQueueElement;
+
+typedef struct VRingDesc
+{
+    uint64_t addr;
+    uint32_t len;
+    uint16_t flags;
+    uint16_t next;
+} VRingDesc;
+
+typedef struct VRingPackedDesc {
+    uint64_t addr;
+    uint32_t len;
+    uint16_t id;
+    uint16_t flags;
+} VRingPackedDesc;
+
+typedef struct VRingAvail
+{
+    uint16_t flags;
+    uint16_t idx;
+    uint16_t ring[];
+} VRingAvail;
+
+typedef struct VRingUsedElem
+{
+    uint32_t id;
+    uint32_t len;
+} VRingUsedElem;
+
+typedef struct VRingUsed
+{
+    uint16_t flags;
+    uint16_t idx;
+    VRingUsedElem ring[];
+} VRingUsed;
+
+typedef struct VRingMemoryRegionCaches {
+    struct rcu_head rcu;
+    MemoryRegionCache desc;
+    MemoryRegionCache avail;
+    MemoryRegionCache used;
+} VRingMemoryRegionCaches;
+
+typedef struct VRing
+{
+    unsigned int num;
+    unsigned int num_default;
+    unsigned int align;
+    hwaddr desc;
+    hwaddr avail;
+    hwaddr used;
+    VRingMemoryRegionCaches *caches;
+} VRing;
+
+typedef struct VRingPackedDescEvent {
+    uint16_t off_wrap;
+    uint16_t flags;
+} VRingPackedDescEvent ;
+
+typedef struct VirtQueue VirtQueue;
+typedef struct VirtIODevice VirtIODevice;
+typedef void (*VirtIOHandleOutput)(VirtIODevice *, VirtQueue *);
+typedef bool (*VirtIOHandleAIOOutput)(VirtIODevice *, VirtQueue *);
+
+struct VirtQueue
+{
+    VRing vring;
+    VirtQueueElement *used_elems;
+
+    /* Next head to pop */
+    uint16_t last_avail_idx;
+    bool last_avail_wrap_counter;
+
+    /* Last avail_idx read from VQ. */
+    uint16_t shadow_avail_idx;
+    bool shadow_avail_wrap_counter;
+
+    uint16_t used_idx;
+    bool used_wrap_counter;
+
+    /* Last used index value we have signalled on */
+    uint16_t signalled_used;
+
+    /* Last used index value we have signalled on */
+    bool signalled_used_valid;
+
+    /* Notification enabled? */
+    bool notification;
+
+    uint16_t queue_index;
+
+    unsigned int inuse;
+
+    uint16_t vector;
+    VirtIOHandleOutput handle_output;
+    VirtIOHandleAIOOutput handle_aio_output;
+    VirtIODevice *vdev;
+    EventNotifier guest_notifier;
+    EventNotifier host_notifier;
+    bool host_notifier_enabled;
+    QLIST_ENTRY(VirtQueue) node;
+};
 
 #define VIRTIO_QUEUE_MAX 1024
 
@@ -173,9 +273,6 @@ void virtio_error(VirtIODevice *vdev, const char *fmt, ...) GCC_FMT_ATTR(2, 3);
 
 /* Set the child bus name. */
 void virtio_device_set_child_bus_name(VirtIODevice *vdev, char *bus_name);
-
-typedef void (*VirtIOHandleOutput)(VirtIODevice *, VirtQueue *);
-typedef bool (*VirtIOHandleAIOOutput)(VirtIODevice *, VirtQueue *);
 
 VirtQueue *virtio_add_queue(VirtIODevice *vdev, int queue_size,
                             VirtIOHandleOutput handle_output);
