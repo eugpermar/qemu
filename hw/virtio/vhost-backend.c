@@ -201,6 +201,46 @@ static int vhost_kernel_get_vq_index(struct vhost_dev *dev, int idx)
     return idx - dev->vq_index;
 }
 
+static int vhost_kernel_set_vq_pause(struct vhost_dev *dev, unsigned idx,
+                                     bool pause)
+{
+    struct vhost_vring_file file = {
+        .index = idx,
+    };
+
+    if (pause) {
+        file.fd = -1; /* Pass -1 to unbind from file. */
+    } else {
+        struct vhost_net *vn_dev = container_of(dev, struct vhost_net, dev);
+        file.fd = vn_dev->backend;
+    }
+
+    return vhost_kernel_net_set_backend(dev, &file);
+}
+
+static int vhost_kernel_vring_pause(struct vhost_dev *dev)
+{
+    int i;
+
+    for (i = 0; i < dev->nvqs; ++i) {
+        vhost_kernel_set_vq_pause(dev, i, true);
+    }
+
+    return 0;
+}
+
+static int vhost_kernel_start(struct vhost_dev *dev, bool start)
+{
+    int i;
+
+    assert(start);
+    for (i = 0; i < dev->nvqs; ++i) {
+        vhost_kernel_set_vq_pause(dev, i, false);
+    }
+
+    return 0;
+}
+
 #ifdef CONFIG_VHOST_VSOCK
 static int vhost_kernel_vsock_set_guest_cid(struct vhost_dev *dev,
                                             uint64_t guest_cid)
@@ -317,6 +357,8 @@ static const VhostOps kernel_ops = {
         .vhost_set_owner = vhost_kernel_set_owner,
         .vhost_reset_device = vhost_kernel_reset_device,
         .vhost_get_vq_index = vhost_kernel_get_vq_index,
+        .vhost_dev_start = vhost_kernel_start,
+        .vhost_vring_pause = vhost_kernel_vring_pause,
 #ifdef CONFIG_VHOST_VSOCK
         .vhost_vsock_set_guest_cid = vhost_kernel_vsock_set_guest_cid,
         .vhost_vsock_set_running = vhost_kernel_vsock_set_running,
