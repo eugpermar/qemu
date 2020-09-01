@@ -564,6 +564,10 @@ static void vhost_commit(MemoryListener *listener)
         }
     }
 
+    if (dev->sw_lm_shadow_vq[0]) {
+        assert(!"TODO: Implement SW LM here?");
+    }
+
     if (!dev->log_enabled) {
         r = dev->vhost_ops->vhost_set_mem_table(dev, dev->mem);
         if (r < 0) {
