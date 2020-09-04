@@ -176,6 +176,8 @@ enum virtio_device_endian {
     VIRTIO_DEVICE_ENDIAN_BIG,
 };
 
+typedef QLIST_HEAD(, VirtQueue) VirtQueueList;
+
 struct VirtIODevice
 {
     DeviceState parent_obj;
@@ -207,7 +209,7 @@ struct VirtIODevice
     uint8_t device_endian;
     bool use_guest_notifier_mask;
     AddressSpace *dma_as;
-    QLIST_HEAD(, VirtQueue) *vector_queues;
+    VirtQueueList *vector_queues;
 };
 
 struct VirtioDeviceClass {
