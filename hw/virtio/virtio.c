@@ -1900,10 +1900,46 @@ static enum virtio_device_endian virtio_current_cpu_endian(void)
     }
 }
 
+static void virtqueue_set_vector(VirtQueue *vq, uint16_t vector,
+                                 VirtQueueList *vector_queue)
+{
+    if (vector_queue && vq->vector != VIRTIO_NO_VECTOR) {
+        QLIST_REMOVE(vq, node);
+    }
+
+    vq->vector = vector;
+
+    if (vector_queue && vector != VIRTIO_NO_VECTOR) {
+        QLIST_INSERT_HEAD(vector_queue, vq, node);
+    }
+
+}
+
+static void virtqueue_reset(VirtQueue *vq, unsigned default_num)
+{
+    vq->vring.desc = 0;
+    vq->vring.avail = 0;
+    vq->vring.used = 0;
+    vq->last_avail_idx = 0;
+    vq->shadow_avail_idx = 0;
+    vq->used_idx = 0;
+    vq->last_avail_wrap_counter = true;
+    vq->shadow_avail_wrap_counter = true;
+    vq->used_wrap_counter = true;
+    virtqueue_set_vector(vq, VIRTIO_NO_VECTOR, NULL);
+    vq->signalled_used = 0;
+    vq->signalled_used_valid = false;
+    vq->notification = true;
+    vq->vring.num = default_num;
+    vq->inuse = 0;
+    virtio_virtqueue_reset_region_cache(vq);
+}
+
 void virtio_reset(void *opaque)
 {
     VirtIODevice *vdev = opaque;
     VirtioDeviceClass *k = VIRTIO_DEVICE_GET_CLASS(vdev);
+    VirtQueue *vq;
     int i;
 
     virtio_set_status(vdev, 0);
@@ -1931,22 +1967,8 @@ void virtio_reset(void *opaque)
     virtio_notify_vector(vdev, vdev->config_vector);
 
     for(i = 0; i < VIRTIO_QUEUE_MAX; i++) {
-        vdev->vq[i].vring.desc = 0;
-        vdev->vq[i].vring.avail = 0;
-        vdev->vq[i].vring.used = 0;
-        vdev->vq[i].last_avail_idx = 0;
-        vdev->vq[i].shadow_avail_idx = 0;
-        vdev->vq[i].used_idx = 0;
-        vdev->vq[i].last_avail_wrap_counter = true;
-        vdev->vq[i].shadow_avail_wrap_counter = true;
-        vdev->vq[i].used_wrap_counter = true;
-        virtio_queue_set_vector(vdev, i, VIRTIO_NO_VECTOR);
-        vdev->vq[i].signalled_used = 0;
-        vdev->vq[i].signalled_used_valid = false;
-        vdev->vq[i].notification = true;
-        vdev->vq[i].vring.num = vdev->vq[i].vring.num_default;
-        vdev->vq[i].inuse = 0;
-        virtio_virtqueue_reset_region_cache(&vdev->vq[i]);
+        vq = virtio_get_queue(vdev, i);
+        virtqueue_reset(vq, vdev->vq[i].vring.num_default);
     }
 }
 
@@ -2298,18 +2320,13 @@ uint16_t virtio_queue_vector(VirtIODevice *vdev, int n)
 void virtio_queue_set_vector(VirtIODevice *vdev, int n, uint16_t vector)
 {
     VirtQueue *vq = &vdev->vq[n];
+    VirtQueueList *vector_queue = NULL;
 
-    if (n < VIRTIO_QUEUE_MAX) {
-        if (vdev->vector_queues &&
-            vdev->vq[n].vector != VIRTIO_NO_VECTOR) {
-            QLIST_REMOVE(vq, node);
-        }
-        vdev->vq[n].vector = vector;
-        if (vdev->vector_queues &&
-            vector != VIRTIO_NO_VECTOR) {
-            QLIST_INSERT_HEAD(&vdev->vector_queues[vector], vq, node);
-        }
+    if (vdev->vector_queues) {
+        vector_queue = &vdev->vector_queues[vector];
     }
+
+    virtqueue_set_vector(vq, vector, vector_queue);
 }
 
 VirtQueue *virtio_add_queue(VirtIODevice *vdev, int queue_size,
