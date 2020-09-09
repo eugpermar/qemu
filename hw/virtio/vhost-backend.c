@@ -218,6 +218,17 @@ static int vhost_kernel_set_vq_enable(struct vhost_dev *dev, unsigned idx,
     return vhost_kernel_net_set_backend(dev, &file);
 }
 
+static int vhost_kernel_set_vring_enable(struct vhost_dev *dev, int enable)
+{
+    int i;
+
+    for (i = 0; i < dev->nvqs; ++i) {
+        vhost_kernel_set_vq_enable(dev, i, enable);
+    }
+
+    return 0;
+}
+
 #ifdef CONFIG_VHOST_VSOCK
 static int vhost_kernel_vsock_set_guest_cid(struct vhost_dev *dev,
                                             uint64_t guest_cid)
@@ -334,6 +345,7 @@ static const VhostOps kernel_ops = {
         .vhost_set_owner = vhost_kernel_set_owner,
         .vhost_reset_device = vhost_kernel_reset_device,
         .vhost_get_vq_index = vhost_kernel_get_vq_index,
+        .vhost_set_vring_enable = vhost_kernel_set_vring_enable,
         .vhost_set_vq_enable = vhost_kernel_set_vq_enable,
 #ifdef CONFIG_VHOST_VSOCK
         .vhost_vsock_set_guest_cid = vhost_kernel_vsock_set_guest_cid,
