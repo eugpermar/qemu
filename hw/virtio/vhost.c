@@ -1263,6 +1263,45 @@ static void vhost_log_global_stop(MemoryListener *listener)
     }
 }
 
+static void copy_vq_avail_elem(VirtQueueElement *dst,
+                               const VirtQueueElement *src) __attribute__((unused));
+static void copy_vq_avail_elem(VirtQueueElement *dst,
+                               const VirtQueueElement *src)
+{
+    size_t in_buf_size = iov_size(src->in_sg, src->in_num);
+    size_t out_buf_size = iov_size(src->out_sg, src->out_num);
+    size_t buf_size = in_buf_size + out_buf_size;
+    void *qemu_buf = g_malloc((src->in_num + src->out_num) *
+                              sizeof(src->in_sg[0]) +
+                              buf_size);
+    char *cursor;
+    unsigned i;
+
+    *dst = *src;
+
+    dst->in_sg = qemu_buf;
+    dst->out_sg = dst->in_sg + src->in_num;
+    cursor = (char *)(dst->out_sg + src->out_num);
+
+    for (i = 0; i < src->in_num; i++) {
+        dst->in_sg[i].iov_base = cursor;
+        cursor += src->in_sg[i].iov_len;
+        dst->in_sg[i].iov_len = src->in_sg[i].iov_len;
+    }
+
+    for (i = 0; i < src->out_num; i++) {
+        dst->out_sg[i].iov_base = cursor;
+        cursor += src->out_sg[i].iov_len;
+        dst->out_sg[i].iov_len = src->out_sg[i].iov_len;
+    }
+
+    // TODO: Avoid this call if not needed?
+    iov_to_buf(src->in_sg, src->in_num, 0, dst->in_sg[0].iov_base,
+               in_buf_size);
+    iov_to_buf(src->out_sg, src->out_num, 0, dst->out_sg[0].iov_base,
+               out_buf_size);
+}
+
 static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
 {
     struct vhost_dev *hdev = vhost_dev_from_virtio(vdev);
