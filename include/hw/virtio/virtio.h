@@ -341,19 +341,19 @@ static inline bool virtio_has_feature(uint64_t features, unsigned int fbit)
     return !!(features & (1ULL << fbit));
 }
 
-static inline bool virtio_vdev_has_feature(VirtIODevice *vdev,
+static inline bool virtio_vdev_has_feature(const VirtIODevice *vdev,
                                            unsigned int fbit)
 {
     return virtio_has_feature(vdev->guest_features, fbit);
 }
 
-static inline bool virtio_host_has_feature(VirtIODevice *vdev,
+static inline bool virtio_host_has_feature(const VirtIODevice *vdev,
                                            unsigned int fbit)
 {
     return virtio_has_feature(vdev->host_features, fbit);
 }
 
-static inline bool virtio_is_big_endian(VirtIODevice *vdev)
+static inline bool virtio_is_big_endian(const VirtIODevice *vdev)
 {
     if (!virtio_vdev_has_feature(vdev, VIRTIO_F_VERSION_1)) {
         assert(vdev->device_endian != VIRTIO_DEVICE_ENDIAN_UNKNOWN);
@@ -363,7 +363,8 @@ static inline bool virtio_is_big_endian(VirtIODevice *vdev)
     return false;
 }
 
-static inline bool virtio_device_started(VirtIODevice *vdev, uint8_t status)
+static inline bool virtio_device_started(const VirtIODevice *vdev,
+                                         uint8_t status)
 {
     if (vdev->use_started) {
         return vdev->started;
@@ -390,7 +391,7 @@ static inline void virtio_set_disabled(VirtIODevice *vdev, bool disable)
     }
 }
 
-static inline bool virtio_device_disabled(VirtIODevice *vdev)
+static inline bool virtio_device_disabled(const VirtIODevice *vdev)
 {
     return unlikely(vdev->disabled || vdev->broken);
 }
