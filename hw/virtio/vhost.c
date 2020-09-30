@@ -106,8 +106,6 @@ static bool vhost_vring_kick(VhostShadowVirtqueue *vq)
 
 /* Called within rcu_read_lock().  */
 static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
-                                             bool enable) __attribute__((unused));
-static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
                                              bool enable)
 {
     uint16_t notification_flag = virtio_tswap16(vq->vdev,
@@ -139,8 +137,6 @@ static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq)
     return vq->used_idx != vq->shadow_used_idx;
 }
 
-static VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq,
-                                                 size_t sz) __attribute__((unused));
 static VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq,
                                                  size_t sz)
 {
@@ -201,6 +197,7 @@ static VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq,
 
     ret = virtqueue_alloc_element(sz, out_num, in_num);
     ret->index = index;
+    ret->len = used_elem.len;
     ret->ndescs = 1;
     ret->in_num = in_num;
     ret->out_num = out_num;
@@ -1302,6 +1299,45 @@ static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
     } while(!virtio_queue_empty(vq));
 }
 
+static void handle_sw_lm_vq_call(VirtIODevice *vdev, VirtQueue *vq)
+{
+    VirtQueueElement *elem, *guest_elem;
+    struct vhost_dev *hdev = vhost_dev_from_virtio(vdev);
+    uint16_t idx = virtio_get_queue_index(vq);
+
+    VhostShadowVirtqueue *svq = hdev->sw_lm_shadow_vq[idx];
+
+    RCU_READ_LOCK_GUARD();
+    if (virtio_queue_empty(vq)) {
+        return;
+    }
+
+    /*
+     * Make used all buffers as possible.
+     */
+    do {
+        int i = 0;
+
+        vhost_vring_set_notification_rcu(svq, false);
+        while (!virtio_queue_empty(vq)) {
+            elem = vhost_vring_get_buf_rcu(svq, sizeof(*elem));
+            if (!elem) {
+                break;
+            }
+
+            guest_elem = svq->ring_id_maps[elem->index];
+
+            assert(i < virtio_queue_get_num(vdev, idx));
+            virtqueue_fill(vq, guest_elem, elem->len, i++);
+        }
+
+        virtqueue_flush(vq, i);
+        virtio_notify_irqfd(vdev, vq);
+
+        vhost_vring_set_notification_rcu(svq, true);
+    } while (vhost_vring_poll_rcu(svq));
+}
+
 static void vhost_handle_call(EventNotifier *n)
 {
     struct vhost_virtqueue *hvq = container_of(n,
@@ -1312,7 +1348,7 @@ static void vhost_handle_call(EventNotifier *n)
     VirtQueue *vq = virtio_get_queue(vdev->vdev, idx);
 
     if (event_notifier_test_and_clear(n)) {
-        virtio_notify_irqfd(vdev->vdev, vq);
+        handle_sw_lm_vq_call(vdev->vdev, vq);
     }
 }
 
