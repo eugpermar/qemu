@@ -59,6 +59,12 @@ typedef struct VhostShadowVirtqueue {
 
     uint16_t free_head;
 
+    /* Last seen used idx */
+    uint16_t shadow_used_idx;
+
+    /* Next head to consume from device */
+    uint16_t used_idx;
+
     bool notification;
 } VhostShadowVirtqueue;
 
@@ -119,6 +125,19 @@ static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
     }
 
     smp_mb();
+}
+
+static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq) __attribute__((unused));
+static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq)
+{
+    if (vq->used_idx != vq->shadow_used_idx) {
+        return true;
+    }
+
+    smp_rmb();
+    vq->shadow_used_idx = virtio_tswap16(vq->vdev, vq->vring.used->idx);
+
+    return vq->used_idx != vq->shadow_used_idx;
 }
 
 static void vhost_vring_write_descs(VhostShadowVirtqueue *vq,
