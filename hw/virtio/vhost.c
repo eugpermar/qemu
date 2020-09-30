@@ -127,7 +127,6 @@ static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
     smp_mb();
 }
 
-static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq) __attribute__((unused));
 static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq)
 {
     if (vq->used_idx != vq->shadow_used_idx) {
@@ -138,6 +137,83 @@ static bool vhost_vring_poll_rcu(VhostShadowVirtqueue *vq)
     vq->shadow_used_idx = virtio_tswap16(vq->vdev, vq->vring.used->idx);
 
     return vq->used_idx != vq->shadow_used_idx;
+}
+
+static VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq,
+                                                 size_t sz) __attribute__((unused));
+static VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq,
+                                                 size_t sz)
+{
+    VirtIODevice *vdev = vq->vdev;
+    const vring_desc_t *desc = vq->vring.desc;
+    const vring_used_t *used = vq->vring.used;
+    VirtQueueElement *ret;
+    vring_used_elem_t used_elem;
+    struct iovec iov[VIRTQUEUE_MAX_SIZE];
+    uint16_t last_used, index, i;
+    size_t in_num = 0, out_num = 0, i_iov = 0;
+
+    if (!vhost_vring_poll_rcu(vq)) {
+        return NULL;
+    }
+
+    last_used = vq->used_idx & (vq->vring.num - 1);
+    used_elem.id = index = i = virtio_tswap32(vq->vdev,
+                                              used->ring[last_used].id);
+    used_elem.len = virtio_tswap32(vq->vdev, used->ring[last_used].len);
+
+    if (unlikely(used_elem.id >= vq->vring.num)) {
+        virtio_error(vq->vdev, "Guest says index %u is available", index);
+        return NULL;
+    }
+
+    for (;;) {
+        vring_desc_t i_desc;
+
+        i_desc = desc[i];
+        iov[i_iov].iov_base = (void *)virtio_tswap64(vdev, i_desc.addr);
+        iov[i_iov].iov_len = virtio_tswap32(vdev, i_desc.len);
+
+        virtio_tswap16s(vdev, &i_desc.flags);
+        if (i_desc.flags & VRING_DESC_F_WRITE) {
+            in_num++;
+        } else if (in_num) {
+            virtio_error(vdev, "Incorrect order for descriptors");
+            return NULL;
+        } else {
+            out_num++;
+        }
+
+        if (!(i_desc.flags & VRING_DESC_F_NEXT)) {
+            break;
+        }
+
+        if (unlikely(i_iov++ >= vq->vring.num)) {
+            virtio_error(vdev, "Looped descriptor");
+        }
+
+        i = virtio_tswap16(vdev, i_desc.next);
+        if (unlikely(i >= vq->vring.num)) {
+            virtio_error(vq->vdev, "Guest says index %u is available", i);
+            return NULL;
+        }
+    }
+
+    ret = virtqueue_alloc_element(sz, out_num, in_num);
+    ret->index = index;
+    ret->ndescs = 1;
+    ret->in_num = in_num;
+    ret->out_num = out_num;
+    for (i = 0; i < out_num; ++i) {
+        ret->out_sg[i] = iov[i];
+    }
+    for (i = 0; i < in_num; ++i) {
+        ret->in_sg[i] = iov[out_num + i];
+    }
+
+    vq->used_idx++;
+
+    return ret;
 }
 
 static void vhost_vring_write_descs(VhostShadowVirtqueue *vq,
