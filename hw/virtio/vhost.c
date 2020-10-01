@@ -325,6 +325,11 @@ static bool vhost_dev_can_log(const struct vhost_dev *hdev)
     return false;
 }
 
+static bool vhost_dev_sw_lm_enabled(const struct vhost_dev *hdev)
+{
+    return hdev->sw_lm_shadow_vq[0];
+}
+
 static void vhost_dev_sync_region(struct vhost_dev *dev,
                                   MemoryRegionSection *section,
                                   uint64_t mfirst, uint64_t mlast,
@@ -793,7 +798,7 @@ static void vhost_commit(MemoryListener *listener)
         }
     }
 
-    if (dev->sw_lm_shadow_vq[0]) {
+    if (vhost_dev_sw_lm_enabled(dev)) {
         assert(!"TODO: Implement SW LM here?");
     }
 
