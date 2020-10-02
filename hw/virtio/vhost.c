@@ -1122,6 +1122,7 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
         vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], idx);
 
         dev->sw_lm_shadow_vq[idx] = vhost_sw_lm_shadow_vq(dev, idx);
+        vhost_virtqueue_memory_unmap(dev, &dev->vqs[idx], true);
 
         vhost_vring_write_addr(dev->sw_lm_shadow_vq[idx], &addr);
         r = dev->vhost_ops->vhost_set_vring_addr(dev, &addr);
