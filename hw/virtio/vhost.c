@@ -1030,6 +1030,7 @@ static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
 
             r = vhost_vring_add(svq, elem);
             assert(r >= 0);
+
             vhost_vring_kick(svq);
         }
 

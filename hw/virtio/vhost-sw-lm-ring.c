@@ -190,6 +190,10 @@ int vhost_vring_add(VhostShadowVirtqueue *vq, VirtQueueElement *elem)
 {
     int host_head = vhost_vring_add_split(vq, elem);
     vq->ring_id_maps[host_head] = elem;
+
+    fprintf(stderr,
+            "[eperezma %s:%d qemu] Make available guest's head %d at vhost %d\n",
+            __func__, __LINE__, elem->index, host_head);
     return 0;
 }
 
@@ -216,6 +220,9 @@ VirtQueueElement *vhost_vring_get_buf_rcu(VhostShadowVirtqueue *vq, size_t sz)
 
     ret = vq->ring_id_maps[used_elem.id];
     ret->len = used_elem.len;
+
+    fprintf(stderr, "[eperezma %s:%d qemu] used guest's head %d at vhost %d\n",
+            __func__, __LINE__, used_elem.id, used_elem.len);
 
     vq->used_idx++;
 
