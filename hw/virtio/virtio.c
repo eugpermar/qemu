@@ -1455,6 +1455,10 @@ static void *virtqueue_split_pop(VirtQueue *vq, size_t sz)
         goto done;
     }
 
+    if (vq->vdev->device_id == VIRTIO_ID_NET) {
+        fprintf(stderr, "[eperezma %s:%d qemu][last_avail_idx=%u]\n",
+                __func__, __LINE__, vq->last_avail_idx);
+    }
     if (!virtqueue_get_head(vq, vq->last_avail_idx++, &head)) {
         goto done;
     }

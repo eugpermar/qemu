@@ -1292,9 +1292,9 @@ static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
             }
 
             host_head = vhost_vring_add_split(svq, elem);
-            if (svq->ring_id_maps[host_head]) {
-                g_free(svq->ring_id_maps[host_head]);
-            }
+            fprintf(stderr,
+                "[eperezma %s:%d qemu] Make available guest's head %d at vhost %d\n",
+                __func__, __LINE__, elem->index, host_head);
 
             svq->ring_id_maps[host_head] = elem;
             vhost_vring_kick(svq);
@@ -1334,6 +1334,9 @@ static void handle_sw_lm_vq_call(VirtIODevice *vdev, VirtQueue *vq)
 
             assert(i < virtio_queue_get_num(vdev, idx));
             virtqueue_fill(vq, guest_elem, elem->len, i++);
+            fprintf(stderr,
+                "[eperezma %s:%d qemu] used guest's head %d at vhost %d\n",
+                __func__, __LINE__, guest_elem->index, elem->index);
         }
 
         virtqueue_flush(vq, i);
