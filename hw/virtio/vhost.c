@@ -1425,6 +1425,7 @@ static int vhost_sw_live_migration_thread_start(struct vhost_dev *dev)
         vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], idx);
 
         vhost_sw_lm_shadow_vq(dev, idx);
+        vhost_virtqueue_memory_unmap(dev, &dev->vqs[idx], true);
 
         addr.desc_user_addr = (uint64_t)vq->desc;
         addr.avail_user_addr = (uint64_t)vq->avail;
