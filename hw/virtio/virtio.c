@@ -670,6 +670,17 @@ int virtio_queue_empty(VirtQueue *vq)
     }
 }
 
+static bool virtio_queue_full_rcu(const VirtQueue *vq)
+{
+    return vq->inuse >= vq->vring.num;
+}
+
+bool virtio_queue_full(const VirtQueue *vq)
+{
+    RCU_READ_LOCK_GUARD();
+    return virtio_queue_full_rcu(vq);
+}
+
 static void virtqueue_unmap_sg(VirtQueue *vq, const VirtQueueElement *elem,
                                unsigned int len)
 {
@@ -1439,7 +1450,7 @@ static void *virtqueue_split_pop(VirtQueue *vq, size_t sz)
 
     max = vq->vring.num;
 
-    if (vq->inuse >= vq->vring.num) {
+    if (unlikely(virtio_queue_full_rcu(vq))) {
         virtio_error(vdev, "Virtqueue size exceeded");
         goto done;
     }
@@ -1574,7 +1585,7 @@ static void *virtqueue_packed_pop(VirtQueue *vq, size_t sz)
 
     max = vq->vring.num;
 
-    if (vq->inuse >= vq->vring.num) {
+    if (unlikely(virtio_queue_full_rcu(vq))) {
         virtio_error(vdev, "Virtqueue size exceeded");
         goto done;
     }
