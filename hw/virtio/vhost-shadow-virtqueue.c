@@ -23,6 +23,9 @@ typedef enum GuestMaskedStatus {
 
 /* Shadow virtqueue to relay notifications */
 typedef struct VhostShadowVirtqueue {
+    /* Shadow vring */
+    struct vring vring;
+
     /* Shadow kick notifier, sent to vhost */
     EventNotifier kick_notifier;
     /* Shadow call notifier, sent to vhost */
@@ -47,6 +50,9 @@ typedef struct VhostShadowVirtqueue {
 
     /* Virtio device */
     VirtIODevice *vdev;
+
+    /* Descriptors copied from guest */
+    vring_desc_t descs[];
 } VhostShadowVirtqueue;
 
 /* Forward guest notifications */
@@ -123,6 +129,19 @@ bool vhost_shadow_vq_unmask(VhostShadowVirtqueue *svq)
     GuestMaskedStatus old = qatomic_xchg(&svq->guest_masked_status,
                                          GUEST_UNMASKED);
     return old == GUEST_MASKED_NOTIFIED;
+}
+
+/*
+ * Get the shadow vq vring address.
+ * @svq Shadow virtqueue
+ * @addr Destination to store address
+ */
+void vhost_shadow_vq_get_vring_addr(const VhostShadowVirtqueue *svq,
+                                    struct vhost_vring_addr *addr)
+{
+    addr->desc_user_addr = (uint64_t)svq->vring.desc;
+    addr->avail_user_addr = (uint64_t)svq->vring.avail;
+    addr->used_user_addr = (uint64_t)svq->vring.used;
 }
 
 /*
@@ -250,7 +269,9 @@ void vhost_shadow_vq_stop(struct vhost_dev *dev,
 VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
 {
     int vq_idx = dev->vq_index + idx;
-    g_autofree VhostShadowVirtqueue *svq = g_new0(VhostShadowVirtqueue, 1);
+    unsigned num = virtio_queue_get_num(dev->vdev, vq_idx);
+    size_t ring_size = vring_size(num, VRING_DESC_ALIGN_SIZE);
+    g_autofree VhostShadowVirtqueue *svq = g_malloc0(sizeof(*svq) + ring_size);
     int r;
 
     r = event_notifier_init(&svq->kick_notifier, 0);
@@ -267,6 +288,7 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
         goto err_init_call_notifier;
     }
 
+    vring_init(&svq->vring, num, svq->descs, VRING_DESC_ALIGN_SIZE);
     svq->vq = virtio_get_queue(dev->vdev, vq_idx);
     svq->vdev = dev->vdev;
     event_notifier_set_handler(&svq->call_notifier,
