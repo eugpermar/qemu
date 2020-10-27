@@ -48,6 +48,16 @@ typedef struct VhostShadowVirtqueue {
     EventNotifier hdev_notifier;
     VirtQueue *vq;
     VirtIODevice *vdev;
+
+    VirtQueueElement **ring_id_maps;
+
+    /* Next head to expose to device */
+    uint16_t avail_idx_shadow;
+
+    /* Number of descriptors added since last notification */
+    uint16_t num_added;
+
+    uint16_t free_head;
 } VhostShadowVirtqueue;
 
 static void vhost_init_vring(VhostShadowVirtqueue *vq, uint16_t num)
@@ -64,15 +74,101 @@ static void vhost_init_vring(VhostShadowVirtqueue *vq, uint16_t num)
     }
 }
 
+static bool vhost_vring_should_kick_rcu(VhostShadowVirtqueue *vq)
+{
+    VirtIODevice *vdev = vq->vdev;
+    vq->num_added = 0;
+
+    smp_rmb();
+    return !(vq->vring.used->flags
+             & virtio_tswap16(vdev, VRING_USED_F_NO_NOTIFY));
+}
+
 static bool vhost_vring_should_kick(VhostShadowVirtqueue *vq)
 {
-    return virtio_queue_get_used_notify_split(vq->vq);
+    RCU_READ_LOCK_GUARD();
+    return vhost_vring_should_kick_rcu(vq);
 }
 
 static bool vhost_vring_kick(VhostShadowVirtqueue *vq)
 {
     return vhost_vring_should_kick(vq) ? event_notifier_set(&vq->hdev_notifier)
                                        : true;
+}
+
+static void vhost_vring_write_descs(VhostShadowVirtqueue *vq,
+                                    const struct iovec *iovec,
+                                    size_t num, bool more_descs, bool write)
+{
+    uint16_t i = vq->free_head, last = vq->free_head;
+    unsigned n;
+    const VirtIODevice *vdev = vq->vdev;
+    uint16_t flags = write ? virtio_tswap16(vdev, VRING_DESC_F_WRITE) : 0;
+    vring_desc_t *descs = vq->vring.desc;
+
+    if (num == 0) {
+        return;
+    }
+
+    for (n = 0; n < num; n++) {
+        if (more_descs || (n + 1 < num)) {
+            descs[i].flags = flags | virtio_tswap16(vdev, VRING_DESC_F_NEXT);
+        } else {
+            descs[i].flags = flags;
+        }
+        descs[i].addr = virtio_tswap64(vdev, (hwaddr)iovec[n].iov_base);
+        descs[i].len = virtio_tswap32(vdev, iovec[n].iov_len);
+
+        last = i;
+        i = virtio_tswap16(vdev, descs[i].next);
+    }
+
+    vq->free_head = virtio_tswap16(vdev, descs[last].next);
+}
+
+/* virtqueue_add:
+ * @vq: The #VirtQueue
+ * @elem: The #VirtQueueElement
+ *
+ * Add an avail element to a virtqueue.
+ */
+static int vhost_vring_add_split(VhostShadowVirtqueue *vq,
+                                 const VirtQueueElement *elem)
+{
+    int head;
+    unsigned avail_idx;
+    const VirtIODevice *vdev;
+    vring_avail_t *avail;
+
+    RCU_READ_LOCK_GUARD();
+    vdev = vq->vdev;
+    avail = vq->vring.avail;
+
+    head = vq->free_head;
+
+    /* We need some descriptors here */
+    assert(elem->out_num || elem->in_num);
+
+    vhost_vring_write_descs(vq, elem->out_sg, elem->out_num,
+                   elem->in_num > 0, false);
+    vhost_vring_write_descs(vq, elem->in_sg, elem->in_num, false, true);
+
+    /* Put entry in available array (but don't update avail->idx until they
+     * do sync). */
+    avail_idx = vq->avail_idx_shadow & (vq->vring.num - 1);
+    avail->ring[avail_idx] = virtio_tswap16(vdev, head);
+    vq->avail_idx_shadow++;
+
+    /* Expose descriptors to device */
+    smp_wmb();
+    avail->idx = virtio_tswap16(vdev, vq->avail_idx_shadow);
+
+    /* threoretically possible. Kick just in case */
+    if (unlikely(vq->num_added++ == (uint16_t)-1)) {
+        vhost_vring_kick(vq);
+    }
+
+    return head;
 }
 
 static struct vhost_log *vhost_log;
@@ -1051,8 +1147,39 @@ static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
     uint16_t idx = virtio_get_queue_index(vq);
 
     VhostShadowVirtqueue *svq = hdev->sw_lm_shadow_vq[idx];
+    VirtQueueElement *elem;
 
-    vhost_vring_kick(svq);
+    /*
+     * Make available all buffers as possible.
+     */
+    do {
+        if (virtio_queue_get_notification(vq)) {
+            virtio_queue_set_notification(vq, false);
+        }
+
+        while (true) {
+            int host_head;
+
+            if (virtio_queue_full(vq)) {
+                break;
+            }
+
+            elem = virtqueue_pop(vq, sizeof(*elem));
+            if (!elem) {
+                break;
+            }
+
+            host_head = vhost_vring_add_split(svq, elem);
+            if (svq->ring_id_maps[host_head]) {
+                g_free(svq->ring_id_maps[host_head]);
+            }
+
+            svq->ring_id_maps[host_head] = elem;
+            vhost_vring_kick(svq);
+        }
+
+        virtio_queue_set_notification(vq, true);
+    } while(!virtio_queue_empty(vq));
 }
 
 static void vhost_handle_call(EventNotifier *n)
@@ -1080,6 +1207,7 @@ static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
     int r;
 
     svq = dev->sw_lm_shadow_vq[idx] = g_new0(VhostShadowVirtqueue, 1);
+    svq->ring_id_maps = g_new0(VirtQueueElement *, num);
     svq->vq = vq;
 
     r = event_notifier_init(&svq->hdev_notifier, 0);
@@ -1095,6 +1223,11 @@ static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
     vhost_virtqueue_pending(dev, idx);
 }
 
+static void vhost_virtqueue_stop(struct vhost_dev *dev,
+                                 struct VirtIODevice *vdev,
+                                 struct vhost_virtqueue *vq,
+                                 unsigned idx);
+
 static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
 {
     int idx;
@@ -1105,6 +1238,7 @@ static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
         vhost_virtqueue_pending(dev, idx);
         event_notifier_cleanup(&dev->sw_lm_shadow_vq[idx]->hdev_notifier);
         g_free(dev->sw_lm_shadow_vq[idx]->vring.desc);
+        g_free(dev->sw_lm_shadow_vq[idx]->ring_id_maps);
         g_free(dev->sw_lm_shadow_vq[idx]);
     }
 
@@ -1113,14 +1247,42 @@ static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
 
 static int vhost_sw_live_migration_thread_start(struct vhost_dev *dev)
 {
-    int idx;
-
-    for (idx = 0; idx < dev->nvqs; ++idx) {
-        vhost_sw_lm_shadow_vq(dev, idx);
-    }
+    int idx, r;
 
     assert(dev->vhost_ops->vhost_set_vring_enable);
     dev->vhost_ops->vhost_set_vring_enable(dev, false);
+
+    for (idx = 0; idx < dev->nvqs; ++idx) {
+        struct vhost_virtqueue *vq = &dev->vqs[idx];
+        struct vhost_vring_addr addr = {
+            .index = idx,
+        };
+        struct vhost_vring_state s = {
+            .index = idx,
+        };
+
+        vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], idx);
+
+        vhost_sw_lm_shadow_vq(dev, idx);
+
+        addr.desc_user_addr = (uint64_t)vq->desc;
+        addr.avail_user_addr = (uint64_t)vq->avail;
+        addr.used_user_addr = (uint64_t)vq->used;
+
+        r = dev->vhost_ops->vhost_set_vring_addr(dev, &addr);
+#if 0
+        if (r < 0) {
+            VHOST_OPS_DEBUG("vhost_set_vring_addr failed");
+            return -errno;
+        }
+#else
+        assert(r == 0);
+#endif
+
+        r = dev->vhost_ops->vhost_set_vring_base(dev, &s);
+        assert(r == 0);
+    }
+
     vhost_dev_disable_notifiers(dev, dev->vdev);
     dev->vhost_ops->vhost_set_vring_enable(dev, true);
 
