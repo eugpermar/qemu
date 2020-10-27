@@ -44,9 +44,18 @@
 #endif
 
 typedef struct VhostShadowVirtqueue {
+    struct vring vring;
     EventNotifier hdev_notifier;
     VirtQueue *vq;
 } VhostShadowVirtqueue;
+
+static void vhost_init_vring(VhostShadowVirtqueue *vq, uint16_t num)
+{
+    unsigned size = vring_size(num, VRING_DESC_ALIGN_SIZE);
+    void *qemu_vring_mem = g_malloc(size);
+
+    vring_init(&vq->vring, num, qemu_vring_mem, VRING_DESC_ALIGN_SIZE);
+}
 
 static bool vhost_vring_should_kick(VhostShadowVirtqueue *vq)
 {
@@ -1008,6 +1017,7 @@ static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
         .index = idx
     };
     VirtQueue *vq = virtio_get_queue(dev->vdev, idx);
+    unsigned num = virtio_queue_get_num(dev->vdev, idx);
     VhostShadowVirtqueue *svq;
     int r;
 
@@ -1020,6 +1030,8 @@ static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
     file.fd = event_notifier_get_fd(&svq->hdev_notifier);
     r = dev->vhost_ops->vhost_set_vring_kick(dev, &file);
     assert(r == 0);
+
+    vhost_init_vring(svq, num);
 
     vhost_virtqueue_mask(dev, dev->vdev, idx, true);
     vhost_virtqueue_pending(dev, idx);
@@ -1034,6 +1046,7 @@ static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
         vhost_virtqueue_mask(dev, dev->vdev, idx, false);
         vhost_virtqueue_pending(dev, idx);
         event_notifier_cleanup(&dev->sw_lm_shadow_vq[idx]->hdev_notifier);
+        g_free(dev->sw_lm_shadow_vq[idx]->vring.desc);
         g_free(dev->sw_lm_shadow_vq[idx]);
     }
 
