@@ -47,14 +47,21 @@ typedef struct VhostShadowVirtqueue {
     struct vring vring;
     EventNotifier hdev_notifier;
     VirtQueue *vq;
+    VirtIODevice *vdev;
 } VhostShadowVirtqueue;
 
 static void vhost_init_vring(VhostShadowVirtqueue *vq, uint16_t num)
 {
     unsigned size = vring_size(num, VRING_DESC_ALIGN_SIZE);
     void *qemu_vring_mem = g_malloc(size);
+    VirtIODevice *vdev = vq->vdev;
+    unsigned i;
 
     vring_init(&vq->vring, num, qemu_vring_mem, VRING_DESC_ALIGN_SIZE);
+
+    for (i = 0; i < num - 1; ++i) {
+        vq->vring.desc[i].next = virtio_tswap16(vdev, i + 1);
+    }
 }
 
 static bool vhost_vring_should_kick(VhostShadowVirtqueue *vq)
