@@ -1296,9 +1296,33 @@ static void vhost_virtqueue_cleanup(struct vhost_virtqueue *vq)
 
 static bool vhost_hdev_can_sw_lm(struct vhost_dev *hdev)
 {
-    (void)hdev;
+    assert(hdev->vhost_ops->vhost_reset_device);
+    assert(hdev->vhost_ops->vhost_get_vring_base);
+    const char *cause = NULL;
 
-    return false;
+    if (hdev->features & (VIRTIO_F_IOMMU_PLATFORM)) {
+        cause = "have iommu";
+    } else if (hdev->features & VIRTIO_F_RING_PACKED) {
+        cause = "is packed";
+    } else if (hdev->features & VIRTIO_RING_F_INDIRECT_DESC) {
+        cause = "Supports indirect descriptors";
+    } else if (hdev->nvqs != 2) {
+        cause = "!= 2 #vq supported";
+    } else if (!hdev->vhost_ops->vhost_net_set_backend) {
+        cause = "cannot pause device";
+    }
+
+    if (cause) {
+        if (!hdev->migration_blocker) {
+            error_setg(&hdev->migration_blocker,
+                "Migration disabled: vhost lacks VHOST_F_LOG_ALL feature and %s.",
+                cause);
+        }
+
+        return false;
+    }
+
+    return true;
 }
 
 int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
@@ -1371,7 +1395,8 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
     };
 
     if (hdev->migration_blocker == NULL) {
-        if (!vhost_dev_can_log(hdev) && !vhost_hdev_can_sw_lm(hdev)) {
+        if (!vhost_dev_can_log(hdev) && !vhost_hdev_can_sw_lm(hdev)
+            && hdev->migration_blocker == NULL) {
             error_setg(&hdev->migration_blocker,
                        "Migration disabled: vhost lacks VHOST_F_LOG_ALL feature.");
         } else if (vhost_dev_log_is_shared(hdev) && !qemu_memfd_alloc_check()) {
