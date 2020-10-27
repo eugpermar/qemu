@@ -984,6 +984,20 @@ static void handle_sw_lm_vq(VirtIODevice *vdev, VirtQueue *vq)
     vhost_vring_kick(svq);
 }
 
+static void vhost_handle_call(EventNotifier *n)
+{
+    struct vhost_virtqueue *hvq = container_of(n,
+                                              struct vhost_virtqueue,
+                                              masked_notifier);
+    struct vhost_dev *vdev = hvq->dev;
+    int idx = hvq == &vdev->vqs[0] ? 0 : 1;
+    VirtQueue *vq = virtio_get_queue(vdev->vdev, idx);
+
+    if (event_notifier_test_and_clear(n)) {
+        virtio_notify_irqfd(vdev->vdev, vq);
+    }
+}
+
 static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
 {
     struct vhost_vring_file file = {
@@ -1002,6 +1016,9 @@ static void vhost_sw_lm_shadow_vq(struct vhost_dev *dev, int idx)
     file.fd = event_notifier_get_fd(&svq->hdev_notifier);
     r = dev->vhost_ops->vhost_set_vring_kick(dev, &file);
     assert(r == 0);
+
+    vhost_virtqueue_mask(dev, dev->vdev, idx, true);
+    vhost_virtqueue_pending(dev, idx);
 }
 
 static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
@@ -1010,6 +1027,8 @@ static int vhost_sw_live_migration_thread_stop(struct vhost_dev *dev)
 
     vhost_dev_enable_notifiers(dev, dev->vdev);
     for (idx = 0; idx < dev->nvqs; ++idx) {
+        vhost_virtqueue_mask(dev, dev->vdev, idx, false);
+        vhost_virtqueue_pending(dev, idx);
         event_notifier_cleanup(&dev->sw_lm_shadow_vq[idx]->hdev_notifier);
         g_free(dev->sw_lm_shadow_vq[idx]);
     }
@@ -1392,6 +1411,7 @@ static int vhost_virtqueue_init(struct vhost_dev *dev,
         return r;
     }
 
+    event_notifier_set_handler(&vq->masked_notifier, vhost_handle_call);
     file.fd = event_notifier_get_fd(&vq->masked_notifier);
     r = dev->vhost_ops->vhost_set_vring_call(dev, &file);
     if (r) {
