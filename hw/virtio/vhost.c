@@ -58,6 +58,8 @@ typedef struct VhostShadowVirtqueue {
     uint16_t num_added;
 
     uint16_t free_head;
+
+    bool notification;
 } VhostShadowVirtqueue;
 
 static void vhost_init_vring(VhostShadowVirtqueue *vq, uint16_t num)
@@ -94,6 +96,29 @@ static bool vhost_vring_kick(VhostShadowVirtqueue *vq)
 {
     return vhost_vring_should_kick(vq) ? event_notifier_set(&vq->hdev_notifier)
                                        : true;
+}
+
+/* Called within rcu_read_lock().  */
+static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
+                                             bool enable) __attribute__((unused));
+static void vhost_vring_set_notification_rcu(VhostShadowVirtqueue *vq,
+                                             bool enable)
+{
+    uint16_t notification_flag = virtio_tswap16(vq->vdev,
+                                                VRING_AVAIL_F_NO_INTERRUPT);
+
+    if (vq->notification == enable) {
+        return;
+    }
+
+    /* Trusting these are atomic operations */
+    if (enable) {
+        vq->vring.used->flags &= ~notification_flag;
+    } else {
+        vq->vring.used->flags |= notification_flag;
+    }
+
+    smp_mb();
 }
 
 static void vhost_vring_write_descs(VhostShadowVirtqueue *vq,
