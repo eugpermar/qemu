@@ -2547,6 +2547,9 @@ void virtio_notify_irqfd(VirtIODevice *vdev, VirtQueue *vq)
     }
 
     trace_virtio_notify_irqfd(vdev, vq);
+    if (vdev->device_id == 1) {
+        fprintf(stderr, "[eperezma %s:%d][vq=%p]\n", __func__, __LINE__, vq);
+    }
 
     /*
      * virtio spec 1.0 says ISR bit 0 should be ignored with MSI, but
@@ -2581,6 +2584,9 @@ void virtio_notify(VirtIODevice *vdev, VirtQueue *vq)
         }
     }
 
+    if (vdev->device_id == 1) {
+        fprintf(stderr, "[eperezma %s:%d][vq=%p]\n", __func__, __LINE__, vq);
+    }
     trace_virtio_notify(vdev, vq);
     virtio_irq(vq);
 }
