@@ -53,6 +53,18 @@ static void handle_shadow_vq(VirtIODevice *vdev, VirtQueue *vq)
     vhost_shadow_vring_kick(svq);
 }
 
+static void vhost_handle_call(EventNotifier *n)
+{
+    VhostShadowVirtqueue *svq = container_of(n, VhostShadowVirtqueue,
+                                             call_notifier);
+
+    if (event_notifier_test_and_clear(n)) {
+        unsigned idx = virtio_queue_get_idx(svq->vdev, svq->vq);
+        virtio_queue_invalidate_signalled_used(svq->vdev, idx);
+        virtio_notify_irqfd(svq->vdev, svq->vq);
+    }
+}
+
 /* Creates vhost shadow virtqueue, and instruct vhost device to use the shadow
  * methods and file descriptors.
  */
@@ -61,6 +73,9 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
     const VirtioDeviceClass *k = VIRTIO_DEVICE_GET_CLASS(dev->vdev);
     VhostShadowVirtqueue *svq = g_new0(VhostShadowVirtqueue, 1);
     struct vhost_vring_file kick_file = {
+        .index = idx,
+    };
+    struct vhost_vring_file call_file = {
         .index = idx,
     };
     int vq_idx = dev->vhost_ops->vhost_get_vq_index(dev, dev->vq_index + idx);
@@ -85,6 +100,9 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
     }
 
     kick_file.fd = event_notifier_get_fd(&svq->kick_notifier);
+    call_file.fd = event_notifier_get_fd(&svq->call_notifier);
+    event_notifier_set_handler(&svq->call_notifier, vhost_handle_call);
+
     RCU_READ_LOCK_GUARD();
 
     /* Check that notifications are still going directly to vhost dev */
@@ -102,7 +120,18 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
         goto err_set_vring_kick;
     }
 
+    r = dev->vhost_ops->vhost_set_vring_call(dev, &call_file);
+    if (r != 0) {
+        error_report("Couldn't set call fd: %s", strerror(errno));
+        goto err_set_vring_call;
+    }
+
     return svq;
+
+err_set_vring_call:
+    kick_file.fd = event_notifier_get_fd(virtio_queue_get_host_notifier(svq->vq));
+    r = dev->vhost_ops->vhost_set_vring_kick(dev, &kick_file);
+    assert(r == 0);
 
 err_set_vring_kick:
     k->set_vq_handler(dev->vdev, idx, NULL);
@@ -119,6 +148,9 @@ err_init_kick_notifier:
 }
 
 /* Free the resources of the shadow virtqueue.
+ *
+ * Note that this function does not restore vhost file descriptors, only the
+ * virtqueue handler.
  */
 void vhost_shadow_vq_free(VhostShadowVirtqueue *vq)
 {

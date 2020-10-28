@@ -968,6 +968,10 @@ static int vhost_sw_live_migration_stop(struct vhost_dev *dev)
             VHOST_OPS_DEBUG("vhost_set_vring_kick failed");
         }
 
+        /* Restore vhost call */
+        vhost_virtqueue_mask(dev, dev->vdev, vq_idx,
+                             dev->vqs[idx].notifier_is_masked);
+
         vhost_shadow_vq_free(dev->shadow_vqs[idx]);
     }
 
@@ -988,6 +992,7 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
         }
     }
 
+    RCU_READ_LOCK_GUARD();
     vhost_dev_disable_notifiers(dev, dev->vdev);
     dev->sw_lm_enabled = true;
 
@@ -1607,6 +1612,13 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
     assert(hdev->vhost_ops);
 
     hdev->vqs[index].notifier_is_masked = mask;
+    if (hdev->sw_lm_enabled) {
+        /* If we switch at this moment, shadow virtqueue vring call will be
+         * overriden. Status has been saved to notifier_is_masked, so proper
+         * call will be set when software live migration stops.
+         */
+        return;
+    }
 
     if (mask) {
         assert(vdev->use_guest_notifier_mask);
