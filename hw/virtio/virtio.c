@@ -2540,11 +2540,11 @@ static bool virtio_should_notify(VirtIODevice *vdev, VirtQueue *vq)
 
 void virtio_notify_irqfd(VirtIODevice *vdev, VirtQueue *vq)
 {
-    WITH_RCU_READ_LOCK_GUARD() {
-        if (!virtio_should_notify(vdev, vq)) {
-            return;
-        }
-    }
+    // WITH_RCU_READ_LOCK_GUARD() {
+    //     if (!virtio_should_notify(vdev, vq)) {
+    //         return;
+    //     }
+    // }
 
     trace_virtio_notify_irqfd(vdev, vq);
     if (vdev->device_id == 1) {
