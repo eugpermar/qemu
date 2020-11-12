@@ -1146,7 +1146,9 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
     vhost_dev_disable_notifiers(dev, dev->vdev);
 
     for (idx = 0; idx < dev->nvqs; ++idx) {
+        struct vhost_virtqueue *vq = &dev->vqs[idx];
         vhost_virtqueue_mask(dev, dev->vdev, idx, true);
+        event_notifier_set_handler(&vq->masked_notifier, vhost_handle_call);
         vhost_virtqueue_pending(dev, idx);
     }
 
@@ -1506,7 +1508,6 @@ static int vhost_virtqueue_init(struct vhost_dev *dev,
         return r;
     }
 
-    event_notifier_set_handler(&vq->masked_notifier, vhost_handle_call);
     file.fd = event_notifier_get_fd(&vq->masked_notifier);
     r = dev->vhost_ops->vhost_set_vring_call(dev, &file);
     if (r) {
