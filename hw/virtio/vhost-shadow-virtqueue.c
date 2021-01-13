@@ -31,6 +31,8 @@ typedef struct VhostShadowVirtqueue {
     EventNotifier svq_kick;
 } VhostShadowVirtqueue;
 
+#define INVALID_SVQ_KICK_FD -1
+
 /**
  * The notifier that SVQ will use to notify the device.
  */
@@ -65,6 +67,10 @@ static void vhost_svq_set_svq_kick_fd_internal(VhostShadowVirtqueue *svq,
                                                bool check_old)
 {
     EventNotifier tmp;
+
+    if (INVALID_SVQ_KICK_FD == event_notifier_get_fd(&svq->svq_kick)) {
+        check_old = false;
+    }
 
     if (check_old) {
         event_notifier_set_handler(&svq->svq_kick, NULL);
@@ -145,6 +151,9 @@ VhostShadowVirtqueue *vhost_svq_new(struct vhost_dev *dev)
                      strerror(errno));
         goto err_init_hdev_call;
     }
+
+    /* Placeholder descriptor, it should be deleted at set_kick_fd */
+    event_notifier_init_fd(&svq->svq_kick, INVALID_SVQ_KICK_FD);
 
     return g_steal_pointer(&svq);
 
