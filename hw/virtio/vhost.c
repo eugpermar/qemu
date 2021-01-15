@@ -61,6 +61,20 @@ bool vhost_has_free_slot(void)
     return slots_limit > used_memslots;
 }
 
+struct vhost_dev *vhost_dev_from_virtio(const VirtIODevice *vdev)
+{
+    struct vhost_dev *hdev;
+
+    QLIST_FOREACH(hdev, &vhost_devices, entry) {
+        if (hdev->vdev == vdev) {
+            return hdev;
+        }
+    }
+
+    assert(hdev);
+    return NULL;
+}
+
 static void vhost_dev_sync_region(struct vhost_dev *dev,
                                   MemoryRegionSection *section,
                                   uint64_t mfirst, uint64_t mlast,
