@@ -1595,6 +1595,24 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
 
     hdev->vqs[index].notifier_is_masked = mask;
 
+    if (hdev->sw_lm_enabled) {
+        if (mask) {
+            vhost_shadow_vq_mask(hdev->shadow_vqs[index]);
+        } else if (vhost_shadow_vq_unmask(hdev->shadow_vqs[index])) {
+            /*
+             * Send notification to masked notifier, so vhost_virtqueue_pending
+             * can check for it
+             */
+            event_notifier_set(&hdev->vqs[index].masked_notifier);
+        }
+
+        /*
+         * Vhost call fd must remain the same since shadow vq is not polling
+         * for changes
+         */
+        return;
+    }
+
     if (mask) {
         assert(vdev->use_guest_notifier_mask);
         file.fd = event_notifier_get_fd(&hdev->vqs[index].masked_notifier);

@@ -15,6 +15,12 @@
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
 
+typedef enum GuestMaskedStatus {
+    GUEST_UNMASKED,
+    GUEST_MASKED,
+    GUEST_MASKED_NOTIFIED,
+} GuestMaskedStatus;
+
 /* Shadow virtqueue to relay notifications */
 typedef struct VhostShadowVirtqueue {
     /* Shadow kick notifier, sent to vhost */
@@ -25,8 +31,22 @@ typedef struct VhostShadowVirtqueue {
     /* Borrowed virtqueue's guest to host notifier. */
     EventNotifier host_notifier;
 
+    /*
+     * Guest notifier status.
+     *
+     * Shadow virtqueue regular operation though event loop can only xchg from
+     * MASKED to UNMASKED.
+     * Shadow virtqueue mask operation through PCI config memory writes can
+     * only set to MASKED or UNMASKED, and will verify if a notification was
+     * pending.
+     */
+    GuestMaskedStatus guest_masked_status;
+
     /* Virtio queue shadowing */
     VirtQueue *vq;
+
+    /* Virtio device */
+    VirtIODevice *vdev;
 } VhostShadowVirtqueue;
 
 /* Forward guest notifications */
@@ -40,6 +60,69 @@ static void vhost_handle_guest_kick(EventNotifier *n)
     }
 
     event_notifier_set(&svq->kick_notifier);
+}
+
+static bool vhost_shadow_vq_masked_is_set(const VhostShadowVirtqueue *svq)
+{
+    GuestMaskedStatus s = qatomic_load_acquire(&svq->guest_masked_status);
+    return s == GUEST_MASKED_NOTIFIED;
+}
+
+/*
+ * It returns false if the guest notifier was not masked
+ */
+static bool vhost_shadow_vq_masked_set(VhostShadowVirtqueue *svq)
+{
+    return qatomic_cmpxchg(&svq->guest_masked_status,
+                           GUEST_MASKED, GUEST_MASKED_NOTIFIED);
+}
+
+static void vhost_shadow_vq_handle_call_no_test(EventNotifier *n)
+{
+    VhostShadowVirtqueue *svq = container_of(n, VhostShadowVirtqueue,
+                                             call_notifier);
+
+    /*
+     * If notified is unmasked in the middle of check,
+     * vhost_shadow_vq_masked_set will fail.
+     */
+    if (!vhost_shadow_vq_masked_is_set(svq) &&
+        !vhost_shadow_vq_masked_set(svq)) {
+        unsigned n = virtio_get_queue_index(svq->vq);
+        virtio_queue_invalidate_signalled_used(svq->vdev, n);
+        virtio_notify_irqfd(svq->vdev, svq->vq);
+    }
+}
+
+/* Forward vhost notifications */
+static void vhost_shadow_vq_handle_call(EventNotifier *n)
+{
+
+    if (likely(event_notifier_test_and_clear(n))) {
+        vhost_shadow_vq_handle_call_no_test(n);
+    }
+}
+
+/*
+ * Mask the shadow virtqueue
+ * @vq Shadow virtqueue
+ */
+void vhost_shadow_vq_mask(VhostShadowVirtqueue *svq)
+{
+    qatomic_cmpxchg(&svq->guest_masked_status, GUEST_UNMASKED, GUEST_MASKED);
+}
+
+/*
+ * Unmask the shadow virtqueue.
+ *
+ * Return true if there exists pending notifications.
+ * @vq Shadow virtqueue
+ */
+bool vhost_shadow_vq_unmask(VhostShadowVirtqueue *svq)
+{
+    GuestMaskedStatus old = qatomic_xchg(&svq->guest_masked_status,
+                                         GUEST_UNMASKED);
+    return old == GUEST_MASKED_NOTIFIED;
 }
 
 /*
@@ -94,7 +177,32 @@ bool vhost_shadow_vq_start(struct vhost_dev *dev,
     /* Check for pending notifications from the guest */
     vhost_handle_guest_kick(&svq->host_notifier);
 
+    /* Set vhost call */
+    file.fd = event_notifier_get_fd(&svq->call_notifier),
+    r = dev->vhost_ops->vhost_set_vring_call(dev, &file);
+    if (unlikely(r != 0)) {
+        error_report("Couldn't set call fd: %s", strerror(errno));
+        goto err_set_vring_call;
+    }
+
+    /* Set shadow vq -> guest notifier */
+    assert(dev->sw_lm_enabled);
+    vhost_virtqueue_mask(dev, dev->vdev, dev->vq_index + idx,
+                         dev->vqs[idx].notifier_is_masked);
+
+    if (dev->vqs[idx].notifier_is_masked &&
+               event_notifier_test_and_clear(&dev->vqs[idx].masked_notifier)) {
+        /* Check for pending notifications from the device */
+        vhost_shadow_vq_handle_call_no_test(&svq->call_notifier);
+    }
+
     return true;
+
+err_set_vring_call:
+    r = vhost_shadow_vq_restore_vdev_host_notifier(dev, idx, svq);
+    if (unlikely(r < 0)) {
+        error_report("Couldn't restore vq kick fd: %s", strerror(-r));
+    }
 
 err_set_vring_kick:
     event_notifier_set_handler(&svq->host_notifier, NULL);
@@ -118,6 +226,11 @@ void vhost_shadow_vq_stop(struct vhost_dev *dev,
     }
 
     event_notifier_set_handler(&svq->host_notifier, NULL);
+
+    /* Restore vhost call */
+    assert(!dev->sw_lm_enabled);
+    vhost_virtqueue_mask(dev, dev->vdev, dev->vq_index + idx,
+                         dev->vqs[idx].notifier_is_masked);
 }
 
 /*
@@ -145,6 +258,9 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
     }
 
     svq->vq = virtio_get_queue(dev->vdev, vq_idx);
+    svq->vdev = dev->vdev;
+    event_notifier_set_handler(&svq->call_notifier,
+                               vhost_shadow_vq_handle_call);
     return g_steal_pointer(&svq);
 
 err_init_call_notifier:
@@ -160,6 +276,7 @@ err_init_kick_notifier:
 void vhost_shadow_vq_free(VhostShadowVirtqueue *vq)
 {
     event_notifier_cleanup(&vq->kick_notifier);
+    event_notifier_set_handler(&vq->call_notifier, NULL);
     event_notifier_cleanup(&vq->call_notifier);
     g_free(vq);
 }
