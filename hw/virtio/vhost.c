@@ -1590,6 +1590,21 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
     /* should only be called after backend is connected */
     assert(hdev->vhost_ops);
 
+    if (hdev->shadow_vqs_enabled) {
+        if (mask) {
+            vhost_shadow_vq_mask(hdev->shadow_vqs[index],
+                                 &hdev->vqs[index].masked_notifier);
+        } else {
+            vhost_shadow_vq_unmask(hdev->shadow_vqs[index]);
+        }
+
+        /*
+         * Vhost call fd must remain the same since shadow vq is not polling
+         * for changes
+         */
+        return;
+    }
+
     if (mask) {
         assert(vdev->use_guest_notifier_mask);
         file.fd = event_notifier_get_fd(&hdev->vqs[index].masked_notifier);

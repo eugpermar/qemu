@@ -28,6 +28,7 @@ struct vhost_virtqueue {
     unsigned avail_size;
     unsigned long long used_phys;
     unsigned used_size;
+    /* Access/writing to notifier_is_masked is protected by BQL */
     bool notifier_is_masked;
     EventNotifier masked_notifier;
     struct vhost_dev *dev;
