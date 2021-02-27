@@ -67,9 +67,33 @@ typedef struct VhostShadowVirtqueue {
     /* Next head to consume from device */
     uint16_t used_idx;
 
+    /* Cache for the exposed notification flag */
+    bool notification;
+
     /* Descriptors copied from guest */
     vring_desc_t descs[];
 } VhostShadowVirtqueue;
+
+static void vhost_shadow_vq_set_notification(VhostShadowVirtqueue *svq,
+                                             bool enable)
+{
+    uint16_t notification_flag;
+
+    if (svq->notification == enable) {
+        return;
+    }
+
+    notification_flag = virtio_tswap16(svq->vdev, VRING_AVAIL_F_NO_INTERRUPT);
+
+    svq->notification = enable;
+    if (enable) {
+        svq->vring.avail->flags &= ~notification_flag;
+    } else {
+        svq->vring.avail->flags |= notification_flag;
+    }
+
+    smp_mb();
+}
 
 static void vhost_vring_write_descs(VhostShadowVirtqueue *svq,
                                     const struct iovec *iovec,
@@ -253,7 +277,7 @@ static void vhost_shadow_vq_handle_call_no_test(EventNotifier *n)
     do {
         unsigned i = 0;
 
-        /* TODO: Use VRING_AVAIL_F_NO_INTERRUPT */
+        vhost_shadow_vq_set_notification(svq, false);
         while (true) {
             g_autofree VirtQueueElement *elem = vhost_shadow_vq_get_buf(svq);
             if (!elem) {
@@ -273,6 +297,7 @@ static void vhost_shadow_vq_handle_call_no_test(EventNotifier *n)
             !vhost_shadow_vq_masked_set(svq)) {
             virtio_notify_irqfd(svq->vdev, svq->vq);
         }
+        vhost_shadow_vq_set_notification(svq, true);
     } while (vhost_shadow_vq_more_used(svq));
 }
 
