@@ -142,6 +142,13 @@ static void vhost_shadow_vq_add(VhostShadowVirtqueue *svq,
     svq->ring_id_maps[qemu_head] = elem;
 }
 
+static void vhost_shadow_vq_kick(VhostShadowVirtqueue *svq) {
+    smp_rmb();
+    if (!(svq->vring.used->flags & VRING_USED_F_NO_NOTIFY)) {
+        event_notifier_set(&svq->kick_notifier);
+    }
+}
+
 /* Handle guest->device notifications */
 static void vhost_handle_guest_kick(EventNotifier *n)
 {
@@ -171,7 +178,7 @@ static void vhost_handle_guest_kick(EventNotifier *n)
             }
 
             vhost_shadow_vq_add(svq, elem);
-            event_notifier_set(&svq->kick_notifier);
+            vhost_shadow_vq_kick(svq);
         }
 
         virtio_queue_set_notification(svq->vq, true);
