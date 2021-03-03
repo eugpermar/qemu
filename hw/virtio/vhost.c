@@ -1224,7 +1224,8 @@ static int vhost_sw_live_migration_stop(struct vhost_dev *dev)
 {
     int idx;
 
-    dev->sw_lm_enabled = false;
+    /* Can be read by vhost_virtqueue_mask, from vm exit */
+    qatomic_store_release(&dev->sw_lm_enabled, false);
 
     for (idx = 0; idx < dev->nvqs; ++idx) {
         vhost_shadow_vq_stop(dev, idx, dev->shadow_vqs[idx]);
@@ -1248,7 +1249,8 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
         }
     }
 
-    dev->sw_lm_enabled = true;
+    /* Can be read by vhost_virtqueue_mask, from vm exit */
+    qatomic_store_release(&dev->sw_lm_enabled, true);
     for (idx = 0; idx < dev->nvqs; ++idx) {
         bool ok = vhost_shadow_vq_start(dev, idx, dev->shadow_vqs[idx]);
         if (unlikely(!ok)) {
@@ -1259,7 +1261,7 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
     return 0;
 
 err_start:
-    dev->sw_lm_enabled = false;
+    qatomic_store_release(&dev->sw_lm_enabled, false);
     for (stop_idx = 0; stop_idx < idx; stop_idx++) {
         vhost_shadow_vq_stop(dev, idx, dev->shadow_vqs[stop_idx]);
     }
@@ -1599,7 +1601,8 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
     QEMU_LOCK_GUARD(&hdev->vqs[index].masked_mutex);
     hdev->vqs[index].notifier_is_masked = mask;
 
-    if (hdev->sw_lm_enabled) {
+    /* Set by QMP thread, so using acquire semantics */
+    if (qatomic_load_acquire(&hdev->sw_lm_enabled)) {
         if (mask) {
             vhost_shadow_vq_mask(hdev->shadow_vqs[index]);
         } else if (vhost_shadow_vq_unmask(hdev->shadow_vqs[index])) {
