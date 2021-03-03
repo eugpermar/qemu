@@ -187,6 +187,11 @@ bool vhost_shadow_vq_start(struct vhost_dev *dev,
 
     /* Set shadow vq -> guest notifier */
     assert(dev->sw_lm_enabled);
+
+    /* Lock to avoid a race condition between guest setting masked status and
+     * us.
+     */
+    QEMU_LOCK_GUARD(&dev->vqs[idx].masked_mutex);
     vhost_virtqueue_mask(dev, dev->vdev, dev->vq_index + idx,
                          dev->vqs[idx].notifier_is_masked);
 
@@ -226,6 +231,11 @@ void vhost_shadow_vq_stop(struct vhost_dev *dev,
     }
 
     event_notifier_set_handler(&svq->host_notifier, NULL);
+
+    /* Lock to avoid a race condition between guest setting masked status and
+     * us.
+     */
+    QEMU_LOCK_GUARD(&dev->vqs[idx].masked_mutex);
 
     /* Restore vhost call */
     assert(!dev->sw_lm_enabled);

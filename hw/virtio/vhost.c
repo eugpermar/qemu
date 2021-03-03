@@ -1343,6 +1343,7 @@ static int vhost_virtqueue_init(struct vhost_dev *dev,
         goto fail_call;
     }
 
+    qemu_rec_mutex_init(&vq->masked_mutex);
     vq->dev = dev;
 
     return 0;
@@ -1353,6 +1354,7 @@ fail_call:
 
 static void vhost_virtqueue_cleanup(struct vhost_virtqueue *vq)
 {
+    qemu_rec_mutex_destroy(&vq->masked_mutex);
     event_notifier_cleanup(&vq->masked_notifier);
 }
 
@@ -1593,6 +1595,8 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
     /* should only be called after backend is connected */
     assert(hdev->vhost_ops);
 
+    /* Avoid race condition with shadow virtqueue stop/start */
+    QEMU_LOCK_GUARD(&hdev->vqs[index].masked_mutex);
     hdev->vqs[index].notifier_is_masked = mask;
 
     if (hdev->sw_lm_enabled) {
