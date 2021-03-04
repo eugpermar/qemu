@@ -35,6 +35,9 @@ typedef struct VhostShadowVirtqueue {
     /* (Possible) masked notifier */
     struct {
         EventNotifier *n;
+
+        /* Avoid re-sending signals */
+        bool signaled;
     } masked_notifier;
 
     /* Virtio queue shadowing */
@@ -70,7 +73,8 @@ static void vhost_shadow_vq_handle_call_no_test(EventNotifier *n)
         unsigned n = virtio_get_queue_index(svq->vq);
         virtio_queue_invalidate_signalled_used(svq->vdev, n);
         virtio_notify_irqfd(svq->vdev, svq->vq);
-    } else {
+    } else if (!svq->masked_notifier.signaled) {
+        svq->masked_notifier.signaled = true;
         event_notifier_set(svq->masked_notifier.n);
     }
 }
@@ -93,6 +97,7 @@ static void vhost_shadow_vq_handle_call(EventNotifier *n)
  */
 void vhost_shadow_vq_mask(VhostShadowVirtqueue *svq, EventNotifier *masked)
 {
+    svq->masked_notifier.signaled = false;
     svq->masked_notifier.n = masked;
 }
 
