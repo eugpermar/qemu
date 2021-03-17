@@ -579,6 +579,23 @@ static bool  vhost_vdpa_force_iommu(struct vhost_dev *dev)
     return true;
 }
 
+static int vhost_vdpa_get_iova_range(struct vhost_dev *dev,
+                                     hwaddr *first, hwaddr *last)
+{
+    int ret;
+    struct vhost_vdpa_iova_range range;
+
+    ret = vhost_vdpa_call(dev, VHOST_VDPA_GET_IOVA_RANGE, &range);
+    if (ret != 0) {
+        return ret;
+    }
+
+    *first = range.first;
+    *last = range.last;
+    trace_vhost_vdpa_get_iova_range(dev, *first, *last);
+    return ret;
+}
+
 const VhostOps vdpa_ops = {
         .backend_type = VHOST_BACKEND_TYPE_VDPA,
         .vhost_backend_init = vhost_vdpa_init,
@@ -611,4 +628,5 @@ const VhostOps vdpa_ops = {
         .vhost_get_device_id = vhost_vdpa_get_device_id,
         .vhost_vq_get_addr = vhost_vdpa_vq_get_addr,
         .vhost_force_iommu = vhost_vdpa_force_iommu,
+        .vhost_get_iova_range = vhost_vdpa_get_iova_range,
 };

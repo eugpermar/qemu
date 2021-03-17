@@ -36,6 +36,7 @@ struct vhost_vring_addr;
 struct vhost_scsi_target;
 struct vhost_iotlb_msg;
 struct vhost_virtqueue;
+struct vhost_vdpa_iova_range;
 
 typedef int (*vhost_backend_init)(struct vhost_dev *dev, void *opaque);
 typedef int (*vhost_backend_cleanup)(struct vhost_dev *dev);
@@ -127,6 +128,9 @@ typedef bool (*vhost_force_iommu_op)(struct vhost_dev *dev);
 
 typedef int (*vhost_vring_pause_op)(struct vhost_dev *dev);
 
+typedef int (*vhost_get_iova_range)(struct vhost_dev *dev,
+                                    hwaddr *first, hwaddr *last);
+
 typedef struct VhostOps {
     VhostBackendType backend_type;
     vhost_backend_init vhost_backend_init;
@@ -173,6 +177,7 @@ typedef struct VhostOps {
     vhost_get_device_id_op vhost_get_device_id;
     vhost_vring_pause_op vhost_vring_pause;
     vhost_force_iommu_op vhost_force_iommu;
+    vhost_get_iova_range vhost_get_iova_range;
 } VhostOps;
 
 extern const VhostOps user_ops;
