@@ -128,7 +128,11 @@ err_init:
 static void vhost_vdpa_cleanup(NetClientState *nc)
 {
     VhostVDPAState *s = DO_UPCAST(VhostVDPAState, nc, nc);
+    struct vhost_dev *dev = s->vhost_vdpa.dev;
 
+    if (dev && dev->vq_index + dev->nvqs == dev->vq_index_end) {
+        g_clear_pointer(&s->vhost_vdpa.iova_tree, vhost_iova_tree_delete);
+    }
     if (s->vhost_net) {
         vhost_net_cleanup(s->vhost_net);
         g_free(s->vhost_net);
@@ -208,6 +212,7 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
                                        bool svq,
                                        bool is_datapath,
                                        struct vhost_vdpa_iova_range iova_range,
+                                       VhostIOVATree *iova_tree,
                                        Error **errp)
 {
     NetClientState *nc = NULL;
@@ -228,6 +233,7 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
     s->vhost_vdpa.index = queue_pair_index;
     s->vhost_vdpa.iova_range = iova_range;
     s->vhost_vdpa.shadow_vqs_enabled = svq;
+    s->vhost_vdpa.iova_tree = iova_tree;
     ret = vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs);
     if (ret) {
         qemu_del_net_client(nc);
@@ -284,6 +290,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     int vdpa_device_fd;
     NetClientState **ncs, *nc;
     int queue_pairs, i, has_cvq = 0;
+    g_autoptr(VhostIOVATree) iova_tree = NULL;
     struct vhost_vdpa_iova_range iova_range;
 
     assert(netdev->type == NET_CLIENT_DRIVER_VHOST_VDPA);
@@ -305,13 +312,16 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         return queue_pairs;
     }
     vhost_vdpa_get_iova_range(vdpa_device_fd, &iova_range);
+    if (opts->x_svq) {
+        iova_tree = vhost_iova_tree_new(iova_range.first, iova_range.last);
+    }
 
     ncs = g_malloc0(sizeof(*ncs) * queue_pairs);
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                      vdpa_device_fd, i, 2, opts->x_svq, true,
-                                     iova_range, errp);
+                                     iova_range, iova_tree, errp);
         if (!ncs[i])
             goto err;
     }
@@ -319,7 +329,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     if (has_cvq) {
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                  vdpa_device_fd, i, 1, opts->x_svq, false,
-                                 iova_range, errp);
+                                 iova_range, iova_tree, errp);
         if (!nc)
             goto err;
     }

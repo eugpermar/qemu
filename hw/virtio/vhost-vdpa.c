@@ -413,6 +413,7 @@ static void vhost_vdpa_svq_cleanup(struct vhost_dev *dev)
         vhost_svq_stop(g_ptr_array_index(v->shadow_vqs, idx));
     }
     g_ptr_array_free(v->shadow_vqs, true);
+    g_clear_pointer(&v->iova_tree, vhost_iova_tree_delete);
 }
 
 static int vhost_vdpa_cleanup(struct vhost_dev *dev)
