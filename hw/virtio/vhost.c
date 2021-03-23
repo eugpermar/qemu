@@ -1012,31 +1012,45 @@ static int vhost_memory_region_lookup(struct vhost_dev *hdev,
 
 int vhost_device_iotlb_miss(struct vhost_dev *dev, uint64_t iova, int write)
 {
-    IOMMUTLBEntry iotlb;
+    IOMMUAccessFlags perm;
     uint64_t uaddr, len;
     int ret = -EFAULT;
-
-    RCU_READ_LOCK_GUARD();
 
     trace_vhost_iotlb_miss(dev, 1);
 
     if (dev->shadow_vqs_enabled) {
-        uaddr = iova;
-        len = 4096;
-        ret = vhost_backend_update_device_iotlb(dev, iova, uaddr, len,
-                                                IOMMU_RW);
-        if (ret) {
-            trace_vhost_iotlb_miss(dev, 2);
-            error_report("Fail to update device iotlb");
+        /* Shadow virtqueue translations in its Virtual Address Space */
+        const VhostDMAMap *result;
+        const VhostDMAMap needle = {
+            .iova = iova,
+        };
+
+        result = vhost_iova_tree_find_taddr(&dev->iova_map, &needle);
+
+        if (unlikely(!result)) {
+            goto out;
         }
 
-        return ret;
-    }
+        iova = result->iova;
+        uaddr = (uint64_t)result->translated_addr;
+        /*
+         * In IOVATree, result.iova + result.size is the last element of iova.
+         * For vhost, it is one past that last element.
+         */
+        len = result->size + 1;
+        perm = result->perm;
+    } else {
+        IOMMUTLBEntry iotlb;
 
-    iotlb = address_space_get_iotlb_entry(dev->vdev->dma_as,
-                                          iova, write,
-                                          MEMTXATTRS_UNSPECIFIED);
-    if (iotlb.target_as != NULL) {
+        RCU_READ_LOCK_GUARD();
+        iotlb = address_space_get_iotlb_entry(dev->vdev->dma_as,
+                                              iova, write,
+                                              MEMTXATTRS_UNSPECIFIED);
+
+        if (iotlb.target_as == NULL) {
+            goto out;
+        }
+
         ret = vhost_memory_region_lookup(dev, iotlb.translated_addr,
                                          &uaddr, &len);
         if (ret) {
@@ -1048,14 +1062,14 @@ int vhost_device_iotlb_miss(struct vhost_dev *dev, uint64_t iova, int write)
 
         len = MIN(iotlb.addr_mask + 1, len);
         iova = iova & ~iotlb.addr_mask;
+        perm = iotlb.perm;
+    }
 
-        ret = vhost_backend_update_device_iotlb(dev, iova, uaddr,
-                                                len, iotlb.perm);
-        if (ret) {
-            trace_vhost_iotlb_miss(dev, 4);
-            error_report("Fail to update device iotlb");
-            goto out;
-        }
+    ret = vhost_backend_update_device_iotlb(dev, iova, uaddr, len, perm);
+    if (ret) {
+        trace_vhost_iotlb_miss(dev, 4);
+        error_report("Fail to update device iotlb");
+        goto out;
     }
 
     trace_vhost_iotlb_miss(dev, 2);
@@ -1248,7 +1262,7 @@ static int vhost_sw_live_migration_stop(struct vhost_dev *dev)
     if (r) {
         error_report("Fail to invalidate device iotlb");
     }
-
+    vhost_iova_tree_destroy(&dev->iova_map);
     for (idx = 0; idx < dev->nvqs; ++idx) {
         struct vhost_virtqueue *vq = dev->vqs + idx;
         if (vhost_dev_has_iommu(dev) &&
@@ -1278,6 +1292,26 @@ static int vhost_sw_live_migration_stop(struct vhost_dev *dev)
     return 0;
 }
 
+static bool vhost_shadow_vq_start_store_sections(struct vhost_dev *dev)
+{
+    int idx;
+
+    for (idx = 0; idx < dev->n_mem_sections; ++idx) {
+        size_t region_size = dev->mem->regions[idx].memory_size;
+        VhostDMAMap region = {
+            .iova = dev->mem->regions[idx].userspace_addr,
+            .translated_addr = (void *)dev->mem->regions[idx].userspace_addr,
+            .size = region_size - 1,
+            .perm = VHOST_ACCESS_RW,
+        };
+
+        VhostDMAMapNewRC r = vhost_iova_tree_insert(&dev->iova_map, &region);
+        assert(r == VHOST_DMA_MAP_OK);
+    }
+
+    return true;
+}
+
 /*
  * Start shadow virtqueue in a given queue.
  * In failure case, this function leaves queue working as regular vhost mode.
@@ -1291,8 +1325,36 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
     struct vhost_vring_state s = {
         .index = idx,
     };
+    VhostDMAMap driver_region, device_region;
+
     int r;
     bool ok;
+
+    assert(dev->shadow_vqs[idx] != NULL);
+    vhost_shadow_vq_get_vring_addr(dev->shadow_vqs[idx], &addr);
+    driver_region = (VhostDMAMap) {
+        .iova = addr.desc_user_addr,
+        .translated_addr = (void *)addr.desc_user_addr,
+
+        /*
+         * DMAMAp.size include the last byte included in the range, while
+         * sizeof marks one past it. Substract one byte to make them match.
+         */
+        .size = vhost_shadow_vq_driver_area_size(dev->shadow_vqs[idx]) - 1,
+        .perm = VHOST_ACCESS_RO,
+    };
+    device_region = (VhostDMAMap) {
+        .iova = addr.used_user_addr,
+        .translated_addr = (void *)addr.used_user_addr,
+        .size = vhost_shadow_vq_device_area_size(dev->shadow_vqs[idx]) - 1,
+        .perm = VHOST_ACCESS_RW,
+    };
+
+    r = vhost_iova_tree_insert(&dev->iova_map, &driver_region);
+    assert(r == VHOST_DMA_MAP_OK);
+
+    r = vhost_iova_tree_insert(&dev->iova_map, &device_region);
+    assert(r == VHOST_DMA_MAP_OK);
 
     vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], dev->vq_index + idx);
     ok = vhost_shadow_vq_start(dev, idx, dev->shadow_vqs[idx]);
@@ -1301,7 +1363,6 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
     }
 
     /* From this point, vhost_virtqueue_start can reset these changes */
-    vhost_shadow_vq_get_vring_addr(dev->shadow_vqs[idx], &addr);
     r = dev->vhost_ops->vhost_set_vring_addr(dev, &addr);
     if (unlikely(r != 0)) {
         VHOST_OPS_DEBUG("vhost_set_vring_addr for shadow vq failed");
@@ -1313,6 +1374,7 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
         VHOST_OPS_DEBUG("vhost_set_vring_base for shadow vq failed");
         goto err;
     }
+
 
     if (vhost_dev_has_iommu(dev) && dev->vhost_ops->vhost_set_iotlb_callback) {
         /*
@@ -1355,6 +1417,15 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
     if (r) {
         error_report("Fail to invalidate device iotlb");
     }
+
+    /*
+     * Create new iova mappings. SVQ always expose qemu's VA.
+     * TODO: Fine tune the exported mapping. Default vhost does not expose
+     * everything.
+     */
+
+    vhost_iova_tree_new(&dev->iova_map);
+    vhost_shadow_vq_start_store_sections(dev);
 
     /* Can be read by vhost_virtqueue_mask, from vm exit */
     dev->shadow_vqs_enabled = true;

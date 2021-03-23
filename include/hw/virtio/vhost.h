@@ -2,6 +2,7 @@
 #define VHOST_H
 
 #include "hw/virtio/vhost-backend.h"
+#include "hw/virtio/vhost-iova-tree.h"
 #include "hw/virtio/virtio.h"
 #include "exec/memory.h"
 
@@ -90,6 +91,8 @@ struct vhost_dev {
     bool log_enabled;
     bool shadow_vqs_enabled;
     uint64_t log_size;
+    /* IOVA mapping used by Shadow Virtqueue */
+    VhostIOVATree iova_map;
     struct {
         hwaddr first;
         hwaddr last;
