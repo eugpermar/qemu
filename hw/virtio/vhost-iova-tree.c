@@ -187,8 +187,30 @@ const VhostDMAMap *vhost_iova_tree_find_taddr(const VhostIOVATree *tree,
                                   vhost_iova_tree_cmp_iova);
 }
 
+static bool vhost_iova_tree_find_iova_hole(const GArray *iova_map,
+                                           const VhostDMAMap *map,
+                                           const VhostDMAMap **prev_elem)
+{
+    size_t i;
+    hwaddr iova = 0;
+
+    *prev_elem = NULL;
+    for (i = 0; i < iova_map->len; i++) {
+        const VhostDMAMap *next = &g_array_index(iova_map, typeof(*next), i);
+        hwaddr hole_end = next->iova;
+        if (map->size < hole_end - iova) {
+            return true;
+        }
+
+        iova = next->iova + next->size + 1;
+        *prev_elem = next;
+    }
+
+    return ((hwaddr)-1 - iova) > iova_map->len;
+}
+
 /**
- * Insert a new map
+ * Insert a new map - internal
  *
  * @tree  The iova tree
  * @map   The iova map
@@ -197,10 +219,13 @@ const VhostDMAMap *vhost_iova_tree_find_taddr(const VhostIOVATree *tree,
  * - VHOST_DMA_MAP_OK if the map fits in the container
  * - VHOST_DMA_MAP_INVALID if the map does not make sense (like size overflow)
  * - VHOST_DMA_MAP_OVERLAP if the tree already contains that map
- * Can query the assignated iova in map.
+ * - VHOST_DMA_MAP_NO_SPACE if iova_rm cannot allocate more space.
+ *
+ * It returns assignated iova in map->iova if return value is VHOST_DMA_MAP_OK.
  */
-VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
-                                        VhostDMAMap *map)
+static VhostDMAMapNewRC vhost_iova_tree_insert_int(VhostIOVATree *tree,
+                                                   VhostDMAMap *map,
+                                                   bool allocate)
 {
     const VhostDMAMap *qemu_prev, *iova_prev;
     int find_prev_rc;
@@ -210,12 +235,27 @@ VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
         return VHOST_DMA_MAP_INVALID;
     }
 
-    /* Check for duplicates, and save position for insertion */
-    find_prev_rc = vhost_iova_tree_find_prev(tree->iova_taddr_map,
-                                             vhost_iova_tree_cmp_iova, map,
-                                             &iova_prev);
-    if (find_prev_rc == VHOST_DMA_MAP_OVERLAP) {
-        return VHOST_DMA_MAP_OVERLAP;
+    if (allocate) {
+        /* Search for a hole in iova space big enough */
+        bool fit = vhost_iova_tree_find_iova_hole(tree->iova_taddr_map, map,
+                                                &iova_prev);
+        if (!fit) {
+            return VHOST_DMA_MAP_NO_SPACE;
+        }
+
+        map->iova = iova_prev ? (iova_prev->iova + iova_prev->size) + 1 : 0;
+    } else {
+        if (map->iova + map->size < map->iova) {
+            return VHOST_DMA_MAP_INVALID;
+        }
+
+        /* Check for duplicates, and save position for insertion */
+        find_prev_rc = vhost_iova_tree_find_prev(tree->iova_taddr_map,
+                                                 vhost_iova_tree_cmp_iova, map,
+                                                 &iova_prev);
+        if (find_prev_rc == VHOST_DMA_MAP_OVERLAP) {
+            return VHOST_DMA_MAP_OVERLAP;
+        }
     }
 
     find_prev_rc = vhost_iova_tree_find_prev(tree->taddr_iova_map,
@@ -228,4 +268,16 @@ VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
     vhost_iova_tree_insert_after(tree->iova_taddr_map, iova_prev, map);
     vhost_iova_tree_insert_after(tree->taddr_iova_map, qemu_prev, map);
     return VHOST_DMA_MAP_OK;
+}
+
+VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
+                                        VhostDMAMap *map)
+{
+    return vhost_iova_tree_insert_int(tree, map, false);
+}
+
+VhostDMAMapNewRC vhost_iova_tree_alloc(VhostIOVATree *tree,
+                                       VhostDMAMap *map)
+{
+    return vhost_iova_tree_insert_int(tree, map, true);
 }
