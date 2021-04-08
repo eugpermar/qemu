@@ -1305,7 +1305,13 @@ static bool vhost_shadow_vq_start_store_sections(struct vhost_dev *dev)
             .perm = VHOST_ACCESS_RW,
         };
 
-        VhostDMAMapNewRC r = vhost_iova_tree_insert(&dev->iova_map, &region);
+        VhostDMAMapNewRC r;
+
+        if (vhost_has_limited_iova_range(dev)) {
+            r = vhost_iova_tree_alloc(&dev->iova_map, &region);
+        } else {
+            r = vhost_iova_tree_insert(&dev->iova_map, &region);
+        }
         assert(r == VHOST_DMA_MAP_OK);
     }
 
@@ -1350,11 +1356,24 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
         .perm = VHOST_ACCESS_RW,
     };
 
-    r = vhost_iova_tree_insert(&dev->iova_map, &driver_region);
-    assert(r == VHOST_DMA_MAP_OK);
+    if (vhost_has_limited_iova_range(dev)) {
+        r = vhost_iova_tree_alloc(&dev->iova_map, &driver_region);
+        assert(r == VHOST_DMA_MAP_OK);
 
-    r = vhost_iova_tree_insert(&dev->iova_map, &device_region);
-    assert(r == VHOST_DMA_MAP_OK);
+        r = vhost_iova_tree_alloc(&dev->iova_map, &device_region);
+        assert(r == VHOST_DMA_MAP_OK);
+
+        addr.avail_user_addr = driver_region.iova + addr.avail_user_addr
+                               - addr.desc_user_addr;
+        addr.desc_user_addr = driver_region.iova;
+        addr.used_user_addr = device_region.iova;
+    } else {
+        r = vhost_iova_tree_insert(&dev->iova_map, &driver_region);
+        assert(r == VHOST_DMA_MAP_OK);
+
+        r = vhost_iova_tree_insert(&dev->iova_map, &device_region);
+        assert(r == VHOST_DMA_MAP_OK);
+    }
 
     vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], dev->vq_index + idx);
     ok = vhost_shadow_vq_start(dev, idx, dev->shadow_vqs[idx]);

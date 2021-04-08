@@ -10,11 +10,18 @@
 #include "hw/virtio/vhost-shadow-virtqueue.h"
 #include "hw/virtio/vhost.h"
 #include "hw/virtio/virtio-access.h"
+#include "hw/virtio/vhost-iova-tree.h"
 
 #include "standard-headers/linux/vhost_types.h"
 
 #include "qemu/error-report.h"
 #include "qemu/main-loop.h"
+
+typedef struct SVQElement {
+    VirtQueueElement elem;
+    void **in_sg_stash;
+    void **out_sg_stash;
+} SVQElement;
 
 /* Shadow virtqueue to relay notifications */
 typedef struct VhostShadowVirtqueue {
@@ -50,8 +57,11 @@ typedef struct VhostShadowVirtqueue {
     /* Virtio device */
     VirtIODevice *vdev;
 
+    /* IOVA mapping if used */
+    VhostIOVATree *iova_map;
+
     /* Map for returning guest's descriptors */
-    VirtQueueElement **ring_id_maps;
+    SVQElement **ring_id_maps;
 
     /* Next head to expose to device */
     uint16_t avail_idx_shadow;
@@ -88,6 +98,66 @@ static void vhost_shadow_vq_set_notification(VhostShadowVirtqueue *svq,
     }
 }
 
+static void vhost_shadow_vq_stash_addr(void ***stash, const struct iovec *iov,
+                                       size_t num)
+{
+    size_t i;
+
+    if (num == 0) {
+        return;
+    }
+
+    *stash = g_new(void *, num);
+    for (i = 0; i < num; ++i) {
+        (*stash)[i] = iov[i].iov_base;
+    }
+}
+
+static void vhost_shadow_vq_unstash_addr(void **stash,
+                                         struct iovec *iov,
+                                         size_t num)
+{
+    size_t i;
+
+    if (num == 0) {
+        return;
+    }
+
+    for (i = 0; i < num; ++i) {
+        iov[i].iov_base = stash[i];
+    }
+    g_free(stash);
+}
+
+static void vhost_shadow_vq_translate_addr(const VhostShadowVirtqueue *svq,
+                                           struct iovec *iovec, size_t num)
+{
+    size_t i;
+
+    for (i = 0; i < num; ++i) {
+        VhostDMAMap needle = {
+            .translated_addr = iovec[i].iov_base,
+            .size = iovec[i].iov_len,
+        };
+        size_t off;
+
+        const VhostDMAMap *map = vhost_iova_tree_find_iova(svq->iova_map,
+                                                           &needle);
+        /*
+         * Map cannot be NULL since iova map contains all guest space and
+         * qemu already has a physical address mapped
+         */
+        assert(map);
+
+        /*
+         * Map->iova chunk size is ignored. What to do if descriptor
+         * (addr, size) does not fit is delegated to the device.
+         */
+        off = needle.translated_addr - map->translated_addr;
+        iovec[i].iov_base = (void *)(map->iova + off);
+    }
+}
+
 static void vhost_vring_write_descs(VhostShadowVirtqueue *svq,
                                     const struct iovec *iovec,
                                     size_t num, bool more_descs, bool write)
@@ -118,8 +188,9 @@ static void vhost_vring_write_descs(VhostShadowVirtqueue *svq,
 }
 
 static unsigned vhost_shadow_vq_add_split(VhostShadowVirtqueue *svq,
-                                          VirtQueueElement *elem)
+                                          SVQElement *svq_elem)
 {
+    VirtQueueElement *elem = &svq_elem->elem;
     int head;
     unsigned avail_idx;
     vring_avail_t *avail = svq->vring.avail;
@@ -128,6 +199,16 @@ static unsigned vhost_shadow_vq_add_split(VhostShadowVirtqueue *svq,
 
     /* We need some descriptors here */
     assert(elem->out_num || elem->in_num);
+
+    if (svq->iova_map) {
+        vhost_shadow_vq_stash_addr(&svq_elem->in_sg_stash, elem->in_sg,
+                                   elem->in_num);
+        vhost_shadow_vq_stash_addr(&svq_elem->out_sg_stash, elem->out_sg,
+                                   elem->out_num);
+
+        vhost_shadow_vq_translate_addr(svq, elem->in_sg, elem->in_num);
+        vhost_shadow_vq_translate_addr(svq, elem->out_sg, elem->out_num);
+    }
 
     vhost_vring_write_descs(svq, elem->out_sg, elem->out_num,
                             elem->in_num > 0, false);
@@ -150,7 +231,7 @@ static unsigned vhost_shadow_vq_add_split(VhostShadowVirtqueue *svq,
 }
 
 static void vhost_shadow_vq_add(VhostShadowVirtqueue *svq,
-                                VirtQueueElement *elem)
+                                SVQElement *elem)
 {
     unsigned qemu_head = vhost_shadow_vq_add_split(svq, elem);
 
@@ -184,7 +265,7 @@ static void vhost_handle_guest_kick(EventNotifier *n)
         }
 
         while (true) {
-            VirtQueueElement *elem = virtqueue_pop(svq->vq, sizeof(*elem));
+            SVQElement *elem = virtqueue_pop(svq->vq, sizeof(*elem));
             if (!elem) {
                 break;
             }
@@ -210,7 +291,7 @@ static bool vhost_shadow_vq_more_used(VhostShadowVirtqueue *svq)
     return svq->used_idx != svq->shadow_used_idx;
 }
 
-static VirtQueueElement *vhost_shadow_vq_get_buf(VhostShadowVirtqueue *svq)
+static SVQElement *vhost_shadow_vq_get_buf(VhostShadowVirtqueue *svq)
 {
     vring_desc_t *descs = svq->vring.desc;
     const vring_used_t *used = svq->vring.used;
@@ -235,7 +316,7 @@ static VirtQueueElement *vhost_shadow_vq_get_buf(VhostShadowVirtqueue *svq)
     svq->free_head = used_elem.id;
 
     svq->used_idx++;
-    svq->ring_id_maps[used_elem.id]->len = used_elem.len;
+    svq->ring_id_maps[used_elem.id]->elem.len = used_elem.len;
     return g_steal_pointer(&svq->ring_id_maps[used_elem.id]);
 }
 
@@ -255,12 +336,21 @@ static void vhost_shadow_vq_handle_call_no_test(EventNotifier *n)
 
         vhost_shadow_vq_set_notification(svq, false);
         while (true) {
-            g_autofree VirtQueueElement *elem = vhost_shadow_vq_get_buf(svq);
-            if (!elem) {
+            g_autofree SVQElement *svq_elem = vhost_shadow_vq_get_buf(svq);
+            VirtQueueElement *elem;
+            if (!svq_elem) {
                 break;
             }
 
             assert(i < svq->vring.num);
+            elem = &svq_elem->elem;
+
+            if (svq->iova_map) {
+                vhost_shadow_vq_unstash_addr(svq_elem->in_sg_stash,
+                                             elem->in_sg, elem->in_num);
+                vhost_shadow_vq_unstash_addr(svq_elem->out_sg_stash,
+                                             elem->out_sg, elem->out_num);
+            }
             virtqueue_fill(vq, elem, elem->len, i++);
         }
 
@@ -455,14 +545,27 @@ void vhost_shadow_vq_stop(struct vhost_dev *dev,
 
 
     for (i = 0; i < svq->vring.num; ++i) {
-        g_autofree VirtQueueElement *elem = svq->ring_id_maps[i];
+        g_autofree SVQElement *svq_elem = svq->ring_id_maps[i];
+        VirtQueueElement *elem;
+
+        if (!svq_elem) {
+            continue;
+        }
+
+        elem = &svq_elem->elem;
+
+        if (svq->iova_map) {
+            vhost_shadow_vq_unstash_addr(svq_elem->in_sg_stash, elem->in_sg,
+                                         elem->in_num);
+            vhost_shadow_vq_unstash_addr(svq_elem->out_sg_stash, elem->out_sg,
+                                         elem->out_num);
+        }
+
         /*
          * Although the doc says we must unpop in order, it's ok to unpop
          * everything.
          */
-        if (elem) {
-            virtqueue_unpop(svq->vq, elem, elem->len);
-        }
+        virtqueue_unpop(svq->vq, elem, elem->len);
     }
 }
 
@@ -504,11 +607,16 @@ VhostShadowVirtqueue *vhost_shadow_vq_new(struct vhost_dev *dev, int idx)
     memset(svq->vring.desc, 0, driver_size);
     svq->vring.used = qemu_memalign(qemu_real_host_page_size, device_size);
     memset(svq->vring.used, 0, device_size);
+
+    if (vhost_has_limited_iova_range(dev)) {
+        svq->iova_map = &dev->iova_map;
+    }
+
     for (i = 0; i < num - 1; i++) {
         svq->vring.desc[i].next = cpu_to_le16(i + 1);
     }
 
-    svq->ring_id_maps = g_new0(VirtQueueElement *, num);
+    svq->ring_id_maps = g_new0(SVQElement *, num);
     event_notifier_set_handler(&svq->call_notifier,
                                vhost_shadow_vq_handle_call);
     return g_steal_pointer(&svq);
