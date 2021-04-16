@@ -1313,9 +1313,19 @@ static bool vhost_shadow_vq_start_store_sections(struct vhost_dev *dev)
             r = vhost_iova_tree_insert(&dev->iova_map, &region);
         }
         assert(r == VHOST_DMA_MAP_OK);
+        r = vhost_vdpa_dma_map(dev->opaque, region.iova, region_size,
+                               (void *)dev->mem->regions[idx].userspace_addr,
+                               false);
+        if (r != 0) {
+            goto fail;
+        }
     }
 
     return true;
+
+fail:
+    assert(0);
+    return false;
 }
 
 /*
@@ -1376,6 +1386,14 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
     }
 
     vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], dev->vq_index + idx);
+    /* TODO: Why cannot make this read only? */
+    r = vhost_vdpa_dma_map(dev->opaque, addr.desc_user_addr, driver_region.size,
+                           (void *)driver_region.translated_addr, false);
+    assert(r == 0);
+    r = vhost_vdpa_dma_map(dev->opaque, addr.used_user_addr, device_region.size,
+                           (void *)device_region.translated_addr, false);
+    assert(r == 0);
+
     ok = vhost_shadow_vq_start(dev, idx, dev->shadow_vqs[idx]);
     if (unlikely(!ok)) {
         return false;

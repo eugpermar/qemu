@@ -203,4 +203,8 @@ int vhost_backend_handle_iotlb_msg(struct vhost_dev *dev,
 
 int vhost_user_gpu_set_socket(struct vhost_dev *dev, int fd);
 
+struct vhost_vdpa;
+int vhost_vdpa_dma_map(struct vhost_vdpa *v, hwaddr iova, hwaddr size,
+                              void *vaddr, bool readonly);
+
 #endif /* VHOST_BACKEND_H */
