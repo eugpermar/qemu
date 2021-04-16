@@ -1385,6 +1385,18 @@ int vhost_dev_init(struct vhost_dev *hdev, void *opaque,
         goto fail;
     }
 
+    if (hdev->vhost_ops->vhost_get_iova_range) {
+        r = hdev->vhost_ops->vhost_get_iova_range(hdev,
+                                                 &hdev->iova_range.first,
+                                                 &hdev->iova_range.last);
+        if (unlikely(r != 0)) {
+            error_report("Can't request IOVA range");
+            goto fail;
+        }
+    } else {
+        hdev->iova_range.last = (hwaddr)-1;
+    }
+
     for (i = 0; i < hdev->nvqs; ++i, ++n_initialized_vqs) {
         r = vhost_virtqueue_init(hdev, hdev->vqs + i, hdev->vq_index + i);
         if (r < 0) {
@@ -1619,6 +1631,11 @@ void vhost_virtqueue_mask(struct vhost_dev *hdev, VirtIODevice *vdev, int n,
     } else {
         hdev->vqs[index].notifier_is_masked = mask;
     }
+}
+
+bool vhost_has_limited_iova_range(const struct vhost_dev *hdev)
+{
+    return hdev->iova_range.first || hdev->iova_range.last != HWADDR_MAX;
 }
 
 uint64_t vhost_get_features(struct vhost_dev *hdev, const int *feature_bits,

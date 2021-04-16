@@ -90,6 +90,10 @@ struct vhost_dev {
     bool log_enabled;
     bool shadow_vqs_enabled;
     uint64_t log_size;
+    struct {
+        hwaddr first;
+        hwaddr last;
+    } iova_range;
     VhostShadowVirtqueue **shadow_vqs;
     Error *migration_blocker;
     const VhostOps *vhost_ops;
@@ -131,6 +135,7 @@ uint64_t vhost_get_features(struct vhost_dev *hdev, const int *feature_bits,
 void vhost_ack_features(struct vhost_dev *hdev, const int *feature_bits,
                         uint64_t features);
 bool vhost_has_free_slot(void);
+bool vhost_has_limited_iova_range(const struct vhost_dev *hdev);
 
 int vhost_net_set_backend(struct vhost_dev *hdev,
                           struct vhost_vring_file *file);
