@@ -272,6 +272,29 @@ static void vhost_vdpa_add_status(struct vhost_dev *dev, uint8_t status)
     vhost_vdpa_call(dev, VHOST_VDPA_SET_STATUS, &s);
 }
 
+static int vhost_vdpa_enable_custom_iommu(struct vhost_dev *dev, bool enable)
+{
+    struct vhost_vdpa *v = dev->opaque;
+    hwaddr iova_range_last = dev->iova_range.last;
+    if (iova_range_last != (hwaddr)-1) {
+        iova_range_last++;
+    }
+
+    if (enable) {
+        int r = vhost_vdpa_dma_unmap(v, dev->iova_range.first, iova_range_last);
+        if (r != 0) {
+            error_report("Fail to invalidate device iotlb");
+        }
+
+        memory_listener_register(&v->listener, &address_space_memory);
+    } else {
+        memory_listener_unregister(&v->listener);
+        return vhost_vdpa_dma_unmap(v, dev->iova_range.first, iova_range_last);
+    }
+
+    return 0;
+}
+
 static int vhost_vdpa_init(struct vhost_dev *dev, void *opaque)
 {
     struct vhost_vdpa *v;
@@ -299,7 +322,7 @@ static int vhost_vdpa_cleanup(struct vhost_dev *dev)
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
     v = dev->opaque;
     trace_vhost_vdpa_cleanup(dev, v);
-    memory_listener_unregister(&v->listener);
+    vhost_vdpa_enable_custom_iommu(dev, false);
 
     dev->opaque = NULL;
     return 0;
@@ -470,11 +493,10 @@ static int vhost_vdpa_get_config(struct vhost_dev *dev, uint8_t *config,
 
 static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 {
-    struct vhost_vdpa *v = dev->opaque;
     trace_vhost_vdpa_dev_start(dev, started);
     if (started) {
         uint8_t status = 0;
-        memory_listener_register(&v->listener, &address_space_memory);
+        vhost_vdpa_enable_custom_iommu(dev, true);
         vhost_vdpa_set_vring_ready(dev);
         vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
         vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
@@ -484,7 +506,7 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
         vhost_vdpa_reset_device(dev);
         vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
                                    VIRTIO_CONFIG_S_DRIVER);
-        memory_listener_unregister(&v->listener);
+        vhost_vdpa_enable_custom_iommu(dev, false);
 
         return 0;
     }
@@ -628,5 +650,6 @@ const VhostOps vdpa_ops = {
         .vhost_get_device_id = vhost_vdpa_get_device_id,
         .vhost_vq_get_addr = vhost_vdpa_vq_get_addr,
         .vhost_force_iommu = vhost_vdpa_force_iommu,
+        .vhost_enable_custom_iommu = vhost_vdpa_enable_custom_iommu,
         .vhost_get_iova_range = vhost_vdpa_get_iova_range,
 };
