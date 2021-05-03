@@ -1240,7 +1240,12 @@ static int vhost_sw_live_migration_stop(struct vhost_dev *dev)
 
     r = dev->vhost_ops->vhost_vring_pause(dev);
     assert(r == 0);
-    if (vhost_backend_invalidate_device_iotlb(dev, 0, -1ULL)) {
+    if (dev->vhost_ops->vhost_enable_custom_iommu) {
+        r = dev->vhost_ops->vhost_enable_custom_iommu(dev, false);
+    } else {
+        r = vhost_backend_invalidate_device_iotlb(dev, 0, -1ULL);
+    }
+    if (r) {
         error_report("Fail to invalidate device iotlb");
     }
 
@@ -1342,7 +1347,12 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
 
     r = dev->vhost_ops->vhost_vring_pause(dev);
     assert(r == 0);
-    if (vhost_backend_invalidate_device_iotlb(dev, 0, -1ULL)) {
+    if (dev->vhost_ops->vhost_enable_custom_iommu) {
+        r = dev->vhost_ops->vhost_enable_custom_iommu(dev, false);
+    } else {
+        r = vhost_backend_invalidate_device_iotlb(dev, 0, -1ULL);
+    }
+    if (r) {
         error_report("Fail to invalidate device iotlb");
     }
 
@@ -2099,8 +2109,6 @@ void qmp_x_vhost_enable_shadow_vq(const char *name, bool enable, Error **errp)
             err_cause = "Cannot pause device";
         } else if (hdev->vhost_ops->vhost_get_iova_range) {
             err_cause = "Device may not support all iova range";
-        } else if (hdev->vhost_ops->vhost_enable_custom_iommu) {
-            err_cause = "Device does not use regular IOMMU";
         } else if (!virtio_vdev_has_feature(hdev->vdev, VIRTIO_F_VERSION_1)) {
             err_cause = "Legacy VirtIO device";
         }
