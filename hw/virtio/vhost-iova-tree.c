@@ -39,6 +39,22 @@ static void vhost_iova_tree_insert_after(GArray *array,
     g_array_insert_val(array, pos, *map);
 }
 
+static gint vhost_iova_tree_cmp_taddr(gconstpointer a, gconstpointer b)
+{
+    const VhostDMAMap *m1 = a, *m2 = b;
+
+    if (m1->translated_addr > m2->translated_addr + m2->size) {
+        return 1;
+    }
+
+    if (m1->translated_addr + m1->size < m2->translated_addr) {
+        return -1;
+    }
+
+    /* Overlapped */
+    return 0;
+}
+
 static gint vhost_iova_tree_cmp_iova(gconstpointer a, gconstpointer b)
 {
     const VhostDMAMap *m1 = a, *m2 = b;
@@ -106,6 +122,9 @@ void vhost_iova_tree_new(VhostIOVATree *tree)
     tree->iova_taddr_map = g_array_new(G_ARRAY_NOT_ZERO_TERMINATED,
                                        G_ARRAY_NOT_CLEAR_ON_ALLOC,
                                        sizeof(VhostDMAMap));
+    tree->taddr_iova_map = g_array_new(G_ARRAY_NOT_ZERO_TERMINATED,
+                                       G_ARRAY_NOT_CLEAR_ON_ALLOC,
+                                       sizeof(VhostDMAMap));
 }
 
 /**
@@ -116,6 +135,7 @@ void vhost_iova_tree_new(VhostIOVATree *tree)
 void vhost_iova_tree_destroy(VhostIOVATree *tree)
 {
     g_array_unref(g_steal_pointer(&tree->iova_taddr_map));
+    g_array_unref(g_steal_pointer(&tree->taddr_iova_map));
 }
 
 /**
@@ -135,6 +155,21 @@ static const VhostDMAMap *vhost_iova_tree_bsearch(const GArray *array,
                                                   GCompareFunc compare_func)
 {
     return bsearch(map, array->data, array->len, sizeof(*map), compare_func);
+}
+
+/**
+ * Find the IOVA address stored from a memory address
+ *
+ * @tree     The iova tree
+ * @map      The map with the memory address
+ *
+ * Return the stored mapping, or NULL if not found.
+ */
+const VhostDMAMap *vhost_iova_tree_find_iova(const VhostIOVATree *tree,
+                                             const VhostDMAMap *map)
+{
+    return vhost_iova_tree_bsearch(tree->taddr_iova_map, map,
+                                   vhost_iova_tree_cmp_taddr);
 }
 
 /**
@@ -167,7 +202,7 @@ const VhostDMAMap *vhost_iova_tree_find_taddr(const VhostIOVATree *tree,
 VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
                                         VhostDMAMap *map)
 {
-    const VhostDMAMap *prev;
+    const VhostDMAMap *qemu_prev, *iova_prev;
     int find_prev_rc;
 
     if (map->translated_addr + map->size < map->translated_addr ||
@@ -178,11 +213,19 @@ VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *tree,
     /* Check for duplicates, and save position for insertion */
     find_prev_rc = vhost_iova_tree_find_prev(tree->iova_taddr_map,
                                              vhost_iova_tree_cmp_iova, map,
-                                             &prev);
+                                             &iova_prev);
     if (find_prev_rc == VHOST_DMA_MAP_OVERLAP) {
         return VHOST_DMA_MAP_OVERLAP;
     }
 
-    vhost_iova_tree_insert_after(tree->iova_taddr_map, prev, map);
+    find_prev_rc = vhost_iova_tree_find_prev(tree->taddr_iova_map,
+                                             vhost_iova_tree_cmp_taddr, map,
+                                             &qemu_prev);
+    if (find_prev_rc == VHOST_DMA_MAP_OVERLAP) {
+        return VHOST_DMA_MAP_OVERLAP;
+    }
+
+    vhost_iova_tree_insert_after(tree->iova_taddr_map, iova_prev, map);
+    vhost_iova_tree_insert_after(tree->taddr_iova_map, qemu_prev, map);
     return VHOST_DMA_MAP_OK;
 }

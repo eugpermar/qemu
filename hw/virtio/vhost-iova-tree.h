@@ -30,18 +30,26 @@ typedef enum VhostDMAMapNewRC {
 /**
  * VhostIOVATree
  *
- * Store and search IOVA -> Translated mappings.
+ * Store and search IOVA -> Translated mappings and the reverse, from
+ * translated address to IOVA.
  *
  * Note that it cannot remove nodes.
  */
 typedef struct VhostIOVATree {
     /* Ordered array of reverse translations, IOVA address to qemu memory. */
     GArray *iova_taddr_map;
+
+    /*
+     * Ordered array of translations from qemu virtual memory address to iova
+     */
+    GArray *taddr_iova_map;
 } VhostIOVATree;
 
 void vhost_iova_tree_new(VhostIOVATree *iova_rm);
 void vhost_iova_tree_destroy(VhostIOVATree *iova_rm);
 
+const VhostDMAMap *vhost_iova_tree_find_iova(const VhostIOVATree *iova_rm,
+                                             const VhostDMAMap *map);
 const VhostDMAMap *vhost_iova_tree_find_taddr(const VhostIOVATree *iova_rm,
                                               const VhostDMAMap *map);
 VhostDMAMapNewRC vhost_iova_tree_insert(VhostIOVATree *iova_rm,
