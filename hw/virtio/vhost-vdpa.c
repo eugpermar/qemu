@@ -23,6 +23,7 @@
 #include "trace.h"
 #include "qemu-common.h"
 
+#if 0
 static bool vhost_vdpa_listener_skipped_section(MemoryRegionSection *section)
 {
     return (!memory_region_is_ram(section->mr) &&
@@ -35,6 +36,7 @@ static bool vhost_vdpa_listener_skipped_section(MemoryRegionSection *section)
             */
            section->offset_within_address_space & (1ULL << 63);
 }
+#endif
 
 int vhost_vdpa_dma_map(struct vhost_vdpa *v, hwaddr iova, hwaddr size,
                               void *vaddr, bool readonly)
@@ -62,6 +64,7 @@ int vhost_vdpa_dma_map(struct vhost_vdpa *v, hwaddr iova, hwaddr size,
     return ret;
 }
 
+#if 0
 static int vhost_vdpa_dma_unmap(struct vhost_vdpa *v, hwaddr iova,
                                 hwaddr size)
 {
@@ -246,6 +249,7 @@ static const MemoryListener vhost_vdpa_memory_listener = {
     .region_add = vhost_vdpa_listener_region_add,
     .region_del = vhost_vdpa_listener_region_del,
 };
+#endif
 
 static int vhost_vdpa_call(struct vhost_dev *dev, unsigned long int request,
                              void *arg)
@@ -274,6 +278,7 @@ static void vhost_vdpa_add_status(struct vhost_dev *dev, uint8_t status)
 
 static int vhost_vdpa_enable_custom_iommu(struct vhost_dev *dev, bool enable)
 {
+#if 0
     struct vhost_vdpa *v = dev->opaque;
     hwaddr iova_range_last = dev->iova_range.last;
     if (iova_range_last != (hwaddr)-1) {
@@ -291,6 +296,7 @@ static int vhost_vdpa_enable_custom_iommu(struct vhost_dev *dev, bool enable)
         memory_listener_unregister(&v->listener);
         return vhost_vdpa_dma_unmap(v, dev->iova_range.first, iova_range_last);
     }
+#endif
 
     return 0;
 }
@@ -307,7 +313,7 @@ static int vhost_vdpa_init(struct vhost_dev *dev, void *opaque)
     dev->opaque =  opaque ;
     vhost_vdpa_call(dev, VHOST_GET_FEATURES, &features);
     dev->backend_features = features;
-    v->listener = vhost_vdpa_memory_listener;
+    /* v->listener = vhost_vdpa_memory_listener; */
     v->msg_type = VHOST_IOTLB_MSG_V2;
 
     vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |

@@ -17,7 +17,7 @@
 typedef struct vhost_vdpa {
     int device_fd;
     uint32_t msg_type;
-    MemoryListener listener;
+    /* MemoryListener listener; */
     struct vhost_dev *dev;
 } VhostVDPA;
 
