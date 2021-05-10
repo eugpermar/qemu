@@ -128,6 +128,9 @@ typedef bool (*vhost_force_iommu_op)(struct vhost_dev *dev);
 
 typedef int (*vhost_vring_pause_op)(struct vhost_dev *dev);
 
+typedef int (*vhost_enable_custom_iommu_op)(struct vhost_dev *dev,
+                                            bool enable);
+
 typedef int (*vhost_get_iova_range)(struct vhost_dev *dev,
                                     hwaddr *first, hwaddr *last);
 
@@ -177,6 +180,7 @@ typedef struct VhostOps {
     vhost_get_device_id_op vhost_get_device_id;
     vhost_vring_pause_op vhost_vring_pause;
     vhost_force_iommu_op vhost_force_iommu;
+    vhost_enable_custom_iommu_op vhost_enable_custom_iommu;
     vhost_get_iova_range vhost_get_iova_range;
 } VhostOps;
 
