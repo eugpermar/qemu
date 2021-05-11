@@ -618,6 +618,19 @@ static int vhost_vdpa_get_iova_range(struct vhost_dev *dev,
     return ret;
 }
 
+static int vhost_vdpa_vring_pause(struct vhost_dev *dev)
+{
+    int r;
+    uint8_t status;
+
+    vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DEVICE_STOPPED);
+    do {
+        r = vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
+    } while (r == 0 && !(status & VIRTIO_CONFIG_S_DEVICE_STOPPED));
+
+    return 0;
+}
+
 const VhostOps vdpa_ops = {
         .backend_type = VHOST_BACKEND_TYPE_VDPA,
         .vhost_backend_init = vhost_vdpa_init,
@@ -650,6 +663,7 @@ const VhostOps vdpa_ops = {
         .vhost_get_device_id = vhost_vdpa_get_device_id,
         .vhost_vq_get_addr = vhost_vdpa_vq_get_addr,
         .vhost_force_iommu = vhost_vdpa_force_iommu,
+        .vhost_vring_pause = vhost_vdpa_vring_pause,
         .vhost_enable_custom_iommu = vhost_vdpa_enable_custom_iommu,
         .vhost_get_iova_range = vhost_vdpa_get_iova_range,
 };
