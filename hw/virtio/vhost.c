@@ -1385,7 +1385,6 @@ static bool vhost_sw_live_migration_start_vq(struct vhost_dev *dev,
         assert(r == VHOST_DMA_MAP_OK);
     }
 
-    vhost_virtqueue_stop(dev, dev->vdev, &dev->vqs[idx], dev->vq_index + idx);
     /* TODO: Why cannot make this read only? */
     r = vhost_vdpa_dma_map(dev->opaque, addr.desc_user_addr, driver_region.size,
                            (void *)driver_region.translated_addr, false);
@@ -1466,6 +1465,11 @@ static int vhost_sw_live_migration_start(struct vhost_dev *dev)
 
     /* Can be read by vhost_virtqueue_mask, from vm exit */
     dev->shadow_vqs_enabled = true;
+
+    /* Reset device, so SVQ can assign its address */
+    r = dev->vhost_ops->vhost_dev_start(dev, false);
+    assert(r == 0);
+
     for (idx = 0; idx < dev->nvqs; ++idx) {
         bool ok = vhost_sw_live_migration_start_vq(dev, idx);
         if (unlikely(!ok)) {
@@ -2106,6 +2110,8 @@ int vhost_dev_start(struct vhost_dev *hdev, VirtIODevice *vdev)
             vhost_device_iotlb_miss(hdev, vq->used_phys, true);
         }
     }
+
+    vhost_sw_live_migration_start(hdev);
     return 0;
 fail_log:
     vhost_log_put(hdev, false);
