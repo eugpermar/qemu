@@ -853,9 +853,29 @@ static void vhost_psvq_free(gpointer svq)
 static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
                                Error **errp)
 {
-    g_autoptr(GPtrArray) shadow_vqs = g_ptr_array_new_full(hdev->nvqs,
-                                                           vhost_psvq_free);
+    g_autoptr(GPtrArray) shadow_vqs = NULL;
+    uint64_t dev_features;
+    uint64_t svq_features;
+    int r;
+    bool ok;
 
+    /* TODO can we use hdev->features at this point? */
+    r = vhost_vdpa_get_features(hdev, &dev_features);
+    if (r != 0) {
+        error_setg(errp, "Can't get vdpa device features, got (%d)", r);
+        return r;
+    }
+
+    svq_features = dev_features;
+    ok = vhost_svq_valid_device_features(&svq_features);
+    if (unlikely(!ok)) {
+        error_setg(errp,
+            "SVQ Invalid device feature flags, offer: 0x%"PRIx64", ok: 0x%"PRIx64,
+            hdev->features, svq_features);
+        return -1;
+    }
+
+    shadow_vqs = g_ptr_array_new_full(hdev->nvqs, vhost_psvq_free);
     for (unsigned n = 0; n < hdev->nvqs; ++n) {
         VhostShadowVirtqueue *svq = vhost_svq_new(hdev);
 
