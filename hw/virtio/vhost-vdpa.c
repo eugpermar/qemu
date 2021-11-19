@@ -916,10 +916,46 @@ static int vhost_vdpa_get_features(struct vhost_dev *dev, uint64_t *features)
 static int vhost_vdpa_set_features(struct vhost_dev *dev,
                                    uint64_t features)
 {
+    struct vhost_vdpa *v = dev->opaque;
     int ret;
 
     if (vhost_vdpa_one_time_request(dev)) {
         return 0;
+    }
+
+    if (v->shadow_vqs_enabled) {
+        uint64_t dev_features, svq_features, acked_features;
+        bool ok;
+
+        ret = vhost_vdpa_get_dev_features(dev, &dev_features);
+        if (ret != 0) {
+            error_report("Can't get vdpa device features, got (%d)", ret);
+            return ret;
+        }
+
+        svq_features = dev_features;
+        ok = vhost_svq_valid_device_features(&svq_features);
+        if (unlikely(!ok)) {
+            error_report("SVQ Invalid device feature flags, offer: 0x%"
+                         PRIx64", ok: 0x%"PRIx64, dev->features, svq_features);
+            return -1;
+        }
+
+        ok = vhost_svq_valid_guest_features(&features);
+        if (unlikely(!ok)) {
+            error_report(
+                "Invalid guest acked feature flag, acked: 0x%"
+                PRIx64", ok: 0x%"PRIx64, dev->acked_features, features);
+            return -1;
+        }
+
+        ok = vhost_svq_ack_guest_features(svq_features, features,
+                                          &acked_features);
+        if (unlikely(!ok)) {
+            return -1;
+        }
+
+        features = acked_features;
     }
 
     trace_vhost_vdpa_set_features(dev, features);
