@@ -205,8 +205,10 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
                                        int vdpa_device_fd,
                                        int queue_pair_index,
                                        int nvqs,
+                                       bool svq,
                                        bool is_datapath,
-                                       struct vhost_vdpa_iova_range iova_range)
+                                       struct vhost_vdpa_iova_range iova_range,
+                                       Error **errp)
 {
     NetClientState *nc = NULL;
     VhostVDPAState *s;
@@ -225,11 +227,13 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
     s->vhost_vdpa.device_fd = vdpa_device_fd;
     s->vhost_vdpa.index = queue_pair_index;
     s->vhost_vdpa.iova_range = iova_range;
+    s->vhost_vdpa.shadow_vqs_enabled = svq;
     ret = vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs);
     if (ret) {
         qemu_del_net_client(nc);
         return NULL;
     }
+
     return nc;
 }
 
@@ -306,14 +310,16 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, true, iova_range);
+                                     vdpa_device_fd, i, 2, opts->x_svq, true,
+                                     iova_range, errp);
         if (!ncs[i])
             goto err;
     }
 
     if (has_cvq) {
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                 vdpa_device_fd, i, 1, false, iova_range);
+                                 vdpa_device_fd, i, 1, opts->x_svq, false,
+                                 iova_range, errp);
         if (!nc)
             goto err;
     }
