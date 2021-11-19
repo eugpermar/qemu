@@ -782,13 +782,26 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
     }
 }
 
-static int vhost_vdpa_get_features(struct vhost_dev *dev,
-                                     uint64_t *features)
+static int vhost_vdpa_get_dev_features(struct vhost_dev *dev,
+                                       uint64_t *features)
 {
     int ret;
 
     ret = vhost_vdpa_call(dev, VHOST_GET_FEATURES, features);
     trace_vhost_vdpa_get_features(dev, *features);
+    return ret;
+}
+
+static int vhost_vdpa_get_features(struct vhost_dev *dev, uint64_t *features)
+{
+    struct vhost_vdpa *v = dev->opaque;
+    int ret = vhost_vdpa_get_dev_features(dev, features);
+
+    if (ret == 0 && v->shadow_vqs_enabled) {
+        /* Filter only features that SVQ can offer to guest */
+        vhost_svq_valid_guest_features(features);
+    }
+
     return ret;
 }
 
@@ -878,7 +891,7 @@ static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
     bool ok;
 
     /* TODO can we use hdev->features at this point? */
-    r = vhost_vdpa_get_features(hdev, &dev_features);
+    r = vhost_vdpa_get_dev_features(hdev, &dev_features);
     if (r != 0) {
         error_setg(errp, "Can't get vdpa device features, got (%d)", r);
         return r;
