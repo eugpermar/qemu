@@ -944,6 +944,23 @@ static int vhost_vdpa_set_owner(struct vhost_dev *dev)
     return vhost_vdpa_call(dev, VHOST_SET_OWNER, NULL);
 }
 
+static bool vhost_vdpa_svq_get_vq_region(struct vhost_vdpa *v,
+                                         unsigned long long addr,
+                                         uint64_t *iova_addr)
+{
+    const DMAMap needle = {
+        .translated_addr = addr,
+    };
+    const DMAMap *translation = vhost_iova_tree_find_iova(v->iova_tree,
+                                                          &needle);
+    if (!translation) {
+        return false;
+    }
+
+    *iova_addr = translation->iova + (addr - translation->translated_addr);
+    return true;
+}
+
 static void vhost_vdpa_vq_get_guest_addr(struct vhost_vring_addr *addr,
                                          struct vhost_virtqueue *vq)
 {
@@ -961,10 +978,23 @@ static int vhost_vdpa_vq_get_addr(struct vhost_dev *dev,
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
 
     if (v->shadow_vqs_enabled) {
+        struct vhost_vring_addr svq_addr;
         int idx = vhost_vdpa_get_vq_index(dev, addr->index);
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, idx);
 
-        vhost_svq_get_vring_addr(svq, addr);
+        vhost_svq_get_vring_addr(svq, &svq_addr);
+        if (!vhost_vdpa_svq_get_vq_region(v, svq_addr.desc_user_addr,
+                                          &addr->desc_user_addr)) {
+            return -1;
+        }
+        if (!vhost_vdpa_svq_get_vq_region(v, svq_addr.avail_user_addr,
+                                          &addr->avail_user_addr)) {
+            return -1;
+        }
+        if (!vhost_vdpa_svq_get_vq_region(v, svq_addr.used_user_addr,
+                                          &addr->used_user_addr)) {
+            return -1;
+        }
     } else {
         vhost_vdpa_vq_get_guest_addr(addr, vq);
     }
