@@ -823,13 +823,31 @@ static int vhost_vdpa_set_owner(struct vhost_dev *dev)
     return vhost_vdpa_call(dev, VHOST_SET_OWNER, NULL);
 }
 
-static int vhost_vdpa_vq_get_addr(struct vhost_dev *dev,
-                    struct vhost_vring_addr *addr, struct vhost_virtqueue *vq)
+static void vhost_vdpa_vq_get_guest_addr(struct vhost_vring_addr *addr,
+                                         struct vhost_virtqueue *vq)
 {
-    assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
     addr->desc_user_addr = (uint64_t)(unsigned long)vq->desc_phys;
     addr->avail_user_addr = (uint64_t)(unsigned long)vq->avail_phys;
     addr->used_user_addr = (uint64_t)(unsigned long)vq->used_phys;
+}
+
+static int vhost_vdpa_vq_get_addr(struct vhost_dev *dev,
+                                  struct vhost_vring_addr *addr,
+                                  struct vhost_virtqueue *vq)
+{
+    struct vhost_vdpa *v = dev->opaque;
+
+    assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
+
+    if (v->shadow_vqs_enabled) {
+        int idx = vhost_vdpa_get_vq_index(dev, addr->index);
+        VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, idx);
+
+        vhost_svq_get_vring_addr(svq, addr);
+    } else {
+        vhost_vdpa_vq_get_guest_addr(addr, vq);
+    }
+
     trace_vhost_vdpa_vq_get_addr(dev, vq, addr->desc_user_addr,
                                  addr->avail_user_addr, addr->used_user_addr);
     return 0;
