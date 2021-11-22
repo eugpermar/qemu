@@ -246,7 +246,8 @@ static int vhost_vdpa_get_max_queue_pairs(int fd, int *has_cvq, Error **errp)
 
         ret = ioctl(fd, VHOST_VDPA_GET_CONFIG, config);
         if (ret) {
-            error_setg(errp, "Fail to get config from vhost-vDPA device");
+            error_setg_errno(errp, ret,
+                             "Fail to get config from vhost-vDPA device");
             return -ret;
         }
 
