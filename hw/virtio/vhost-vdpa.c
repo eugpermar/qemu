@@ -19,6 +19,7 @@
 #include "hw/virtio/virtio-net.h"
 #include "hw/virtio/vhost-shadow-virtqueue.h"
 #include "hw/virtio/vhost-vdpa.h"
+#include "migration/blocker.h"
 #include "exec/address-spaces.h"
 #include "qemu/cutils.h"
 #include "qemu/main-loop.h"
@@ -1089,6 +1090,7 @@ static bool vhost_vdpa_svqs_stop(struct vhost_dev *dev)
 static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 {
     struct vhost_vdpa *v = dev->opaque;
+    int r;
     bool ok;
     trace_vhost_vdpa_dev_start(dev, started);
 
@@ -1099,7 +1101,19 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
             return -1;
         }
         vhost_vdpa_set_vring_ready(dev);
+        if (dev->migration_blocker) {
+            Error *add_blocker_err = NULL;
+            r = migrate_add_blocker(v->migration_blocker, &add_blocker_err);
+            if (unlikely(r < 0)) {
+                error_reportf_err(add_blocker_err,
+                                  "Cannot add migration blocker: ");
+                return -1;
+            }
+        }
     } else {
+        if (v->migration_blocker) {
+            migrate_del_blocker(v->migration_blocker);
+        }
         ok = vhost_vdpa_svqs_stop(dev);
         if (unlikely(!ok)) {
             return -1;

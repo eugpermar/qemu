@@ -188,6 +188,14 @@ static NetClientInfo net_vhost_vdpa_info = {
         .check_peer_type = vhost_vdpa_check_peer_type,
 };
 
+static int vhost_vdpa_get_iova_range(int fd,
+                                     struct vhost_vdpa_iova_range *iova_range)
+{
+    int ret = ioctl(fd, VHOST_VDPA_GET_IOVA_RANGE, iova_range);
+
+    return ret < 0 ? -errno : 0;
+}
+
 static void vhost_vdpa_net_handle_ctrl(VirtIODevice *vdev,
                                        const VirtQueueElement *elem)
 {
@@ -234,7 +242,9 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
                                            int vdpa_device_fd,
                                            int queue_pair_index,
                                            int nvqs,
-                                           bool is_datapath)
+                                           bool is_datapath,
+                                           bool svq,
+                                           VhostIOVATree *iova_tree)
 {
     NetClientState *nc = NULL;
     VhostVDPAState *s;
@@ -252,8 +262,11 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
 
     s->vhost_vdpa.device_fd = vdpa_device_fd;
     s->vhost_vdpa.index = queue_pair_index;
+    s->vhost_vdpa.shadow_vqs_enabled = svq;
+    s->vhost_vdpa.iova_tree = iova_tree;
     if (!is_datapath) {
         s->vhost_vdpa.shadow_vq_ops = &vhost_vdpa_net_svq_ops;
+        error_setg(&s->vhost_vdpa.migration_blocker, "Guest have CVQ");
     }
     ret = vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs);
     if (ret) {
@@ -308,6 +321,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     const NetdevVhostVDPAOptions *opts;
     int vdpa_device_fd;
     g_autofree NetClientState **ncs = NULL;
+    g_autoptr(VhostIOVATree) iova_tree = NULL;
     NetClientState *nc;
     int queue_pairs, i, has_cvq = 0;
 
@@ -330,18 +344,26 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         return queue_pairs;
     }
 
+    if (opts->x_svq) {
+        struct vhost_vdpa_iova_range iova_range;
+        vhost_vdpa_get_iova_range(vdpa_device_fd, &iova_range);
+        iova_tree = vhost_iova_tree_new(iova_range.first, iova_range.last);
+    }
+
     ncs = g_malloc0(sizeof(*ncs) * queue_pairs);
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, true);
+                                     vdpa_device_fd, i, 2, true, opts->x_svq,
+                                     iova_tree);
         if (!ncs[i])
             goto err;
     }
 
     if (has_cvq) {
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                 vdpa_device_fd, i, 1, false);
+                                 vdpa_device_fd, i, 1, false,
+                                 opts->x_svq, iova_tree);
         if (!nc)
             goto err;
     }
