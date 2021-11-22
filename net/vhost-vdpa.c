@@ -509,7 +509,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         svq_cvq = vhost_vdpa_check_cvq_svq(vdpa_device_fd, name);
     }
 
-    if (svq_cvq) {
+    if (svq_cvq || opts->x_svq) {
         vhost_vdpa_get_iova_range(vdpa_device_fd, &iova_range);
 
         uint64_t invalid_dev_features =
@@ -531,7 +531,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, true, false,
+                                     vdpa_device_fd, i, 2, true, opts->x_svq,
                                      iova_tree);
         if (!ncs[i])
             goto err;
@@ -540,7 +540,8 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     if (has_cvq) {
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                  vdpa_device_fd, i, 1, false,
-                                 svq_cvq, iova_tree);
+                                 svq_cvq || opts->x_svq,
+                                 iova_tree);
         if (!nc)
             goto err;
     }
