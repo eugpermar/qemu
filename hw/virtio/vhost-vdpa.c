@@ -792,6 +792,31 @@ static int vhost_vdpa_svq_set_fds(struct vhost_dev *dev,
 }
 
 /**
+ * Map SVQ area in the device
+ *
+ * @iova_tree  The iova tree containing the area
+ * @needle     The area to search iova
+ * @readonly   Permissions of the area
+ */
+static bool vhost_vdpa_svq_map_ring(struct vhost_vdpa *v, const DMAMap *needle,
+                                    bool readonly)
+{
+    hwaddr off;
+    const DMAMap *result = vhost_iova_tree_find_iova(v->iova_tree, needle);
+    int r;
+
+    if (unlikely(!result)) {
+        error_report("Can't locate SVQ ring");
+        return false;
+    }
+
+    off = needle->translated_addr - result->translated_addr;
+    r = vhost_vdpa_dma_map(v, result->iova + off, needle->size,
+                           (void *)needle->translated_addr, readonly);
+    return r == 0;
+}
+
+/**
  * Map shadow virtqueue rings in device
  *
  * @dev   The vhost device
@@ -802,23 +827,29 @@ static bool vhost_vdpa_svq_map_rings(struct vhost_dev *dev,
                                      struct vhost_virtqueue *vq,
                                      const VhostShadowVirtqueue *svq)
 {
+    DMAMap needle;
     struct vhost_vdpa *v = dev->opaque;
     struct vhost_vring_addr svq_addr;
     size_t device_size = vhost_svq_device_area_size(svq);
     size_t driver_size = vhost_svq_driver_area_size(svq);
-    int r;
+    bool ok;
 
     vhost_svq_get_vring_addr(svq, &svq_addr);
 
-    r = vhost_vdpa_dma_map(v, svq_addr.desc_user_addr, driver_size,
-                           (void *)svq_addr.desc_user_addr, true);
-    if (unlikely(r != 0)) {
+    needle = (DMAMap) {
+        .translated_addr = svq_addr.desc_user_addr,
+        .size = driver_size,
+    };
+    ok = vhost_vdpa_svq_map_ring(v, &needle, true);
+    if (unlikely(!ok)) {
         return false;
     }
 
-    r = vhost_vdpa_dma_map(v, svq_addr.used_user_addr, device_size,
-                           (void *)svq_addr.used_user_addr, false);
-    return r == 0;
+    needle = (DMAMap) {
+        .translated_addr = svq_addr.used_user_addr,
+        .size = device_size,
+    };
+    return vhost_vdpa_svq_map_ring(v, &needle, false);
 }
 
 static bool vhost_vdpa_svq_setup(struct vhost_dev *dev,
@@ -950,6 +981,7 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
             return -1;
         }
 
+        features |= BIT_ULL(VIRTIO_F_IOMMU_PLATFORM);
         ok = vhost_svq_valid_guest_features(&features);
         if (unlikely(!ok)) {
             error_report(
