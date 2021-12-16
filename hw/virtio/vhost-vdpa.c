@@ -313,39 +313,6 @@ static bool vhost_vdpa_one_time_request(struct vhost_dev *dev)
     return v->index != 0;
 }
 
-static int vhost_vdpa_init(struct vhost_dev *dev, void *opaque, Error **errp)
-{
-    struct vhost_vdpa *v;
-    assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
-    trace_vhost_vdpa_init(dev, opaque);
-    int ret;
-
-    /*
-     * Similar to VFIO, we end up pinning all guest memory and have to
-     * disable discarding of RAM.
-     */
-    ret = ram_block_discard_disable(true);
-    if (ret) {
-        error_report("Cannot set discarding of RAM broken");
-        return ret;
-    }
-
-    v = opaque;
-    v->dev = dev;
-    dev->opaque =  opaque ;
-    v->listener = vhost_vdpa_memory_listener;
-    v->msg_type = VHOST_IOTLB_MSG_V2;
-
-    if (vhost_vdpa_one_time_request(dev)) {
-        return 0;
-    }
-
-    vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
-                               VIRTIO_CONFIG_S_DRIVER);
-
-    return 0;
-}
-
 static void vhost_vdpa_host_notifier_uninit(struct vhost_dev *dev,
                                             int queue_index)
 {
@@ -475,27 +442,6 @@ static int vhost_vdpa_set_mem_table(struct vhost_dev *dev,
     return 0;
 }
 
-static int vhost_vdpa_set_features(struct vhost_dev *dev,
-                                   uint64_t features)
-{
-    int ret;
-
-    if (vhost_vdpa_one_time_request(dev)) {
-        return 0;
-    }
-
-    trace_vhost_vdpa_set_features(dev, features);
-    ret = vhost_vdpa_call(dev, VHOST_SET_FEATURES, &features);
-    uint8_t status = 0;
-    if (ret) {
-        return ret;
-    }
-    vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_FEATURES_OK);
-    vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
-
-    return !(status & VIRTIO_CONFIG_S_FEATURES_OK);
-}
-
 static int vhost_vdpa_set_backend_cap(struct vhost_dev *dev)
 {
     uint64_t features;
@@ -618,39 +564,6 @@ static int vhost_vdpa_get_config(struct vhost_dev *dev, uint8_t *config,
     return ret;
  }
 
-static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
-{
-    struct vhost_vdpa *v = dev->opaque;
-    trace_vhost_vdpa_dev_start(dev, started);
-
-    if (started) {
-        vhost_vdpa_host_notifiers_init(dev);
-        vhost_vdpa_set_vring_ready(dev);
-    } else {
-        vhost_vdpa_host_notifiers_uninit(dev, dev->nvqs);
-    }
-
-    if (dev->vq_index + dev->nvqs != dev->vq_index_end) {
-        return 0;
-    }
-
-    if (started) {
-        uint8_t status = 0;
-        memory_listener_register(&v->listener, &address_space_memory);
-        vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
-        vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
-
-        return !(status & VIRTIO_CONFIG_S_DRIVER_OK);
-    } else {
-        vhost_vdpa_reset_device(dev);
-        vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
-                                   VIRTIO_CONFIG_S_DRIVER);
-        memory_listener_unregister(&v->listener);
-
-        return 0;
-    }
-}
-
 static int vhost_vdpa_set_log_base(struct vhost_dev *dev, uint64_t base,
                                      struct vhost_log *log)
 {
@@ -711,6 +624,39 @@ static int vhost_vdpa_set_vring_call(struct vhost_dev *dev,
     return vhost_vdpa_call(dev, VHOST_SET_VRING_CALL, file);
 }
 
+static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
+{
+    struct vhost_vdpa *v = dev->opaque;
+    trace_vhost_vdpa_dev_start(dev, started);
+
+    if (started) {
+        vhost_vdpa_host_notifiers_init(dev);
+        vhost_vdpa_set_vring_ready(dev);
+    } else {
+        vhost_vdpa_host_notifiers_uninit(dev, dev->nvqs);
+    }
+
+    if (dev->vq_index + dev->nvqs != dev->vq_index_end) {
+        return 0;
+    }
+
+    if (started) {
+        uint8_t status = 0;
+        memory_listener_register(&v->listener, &address_space_memory);
+        vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
+        vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
+
+        return !(status & VIRTIO_CONFIG_S_DRIVER_OK);
+    } else {
+        vhost_vdpa_reset_device(dev);
+        vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
+                                   VIRTIO_CONFIG_S_DRIVER);
+        memory_listener_unregister(&v->listener);
+
+        return 0;
+    }
+}
+
 static int vhost_vdpa_get_features(struct vhost_dev *dev,
                                      uint64_t *features)
 {
@@ -719,6 +665,27 @@ static int vhost_vdpa_get_features(struct vhost_dev *dev,
     ret = vhost_vdpa_call(dev, VHOST_GET_FEATURES, features);
     trace_vhost_vdpa_get_features(dev, *features);
     return ret;
+}
+
+static int vhost_vdpa_set_features(struct vhost_dev *dev,
+                                   uint64_t features)
+{
+    int ret;
+
+    if (vhost_vdpa_one_time_request(dev)) {
+        return 0;
+    }
+
+    trace_vhost_vdpa_set_features(dev, features);
+    ret = vhost_vdpa_call(dev, VHOST_SET_FEATURES, &features);
+    uint8_t status = 0;
+    if (ret) {
+        return ret;
+    }
+    vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_FEATURES_OK);
+    vhost_vdpa_call(dev, VHOST_VDPA_GET_STATUS, &status);
+
+    return !(status & VIRTIO_CONFIG_S_FEATURES_OK);
 }
 
 static int vhost_vdpa_set_owner(struct vhost_dev *dev)
@@ -746,6 +713,39 @@ static int vhost_vdpa_vq_get_addr(struct vhost_dev *dev,
 static bool  vhost_vdpa_force_iommu(struct vhost_dev *dev)
 {
     return true;
+}
+
+static int vhost_vdpa_init(struct vhost_dev *dev, void *opaque, Error **errp)
+{
+    struct vhost_vdpa *v;
+    assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
+    trace_vhost_vdpa_init(dev, opaque);
+    int ret;
+
+    /*
+     * Similar to VFIO, we end up pinning all guest memory and have to
+     * disable discarding of RAM.
+     */
+    ret = ram_block_discard_disable(true);
+    if (ret) {
+        error_report("Cannot set discarding of RAM broken");
+        return ret;
+    }
+
+    v = opaque;
+    v->dev = dev;
+    dev->opaque =  opaque ;
+    v->listener = vhost_vdpa_memory_listener;
+    v->msg_type = VHOST_IOTLB_MSG_V2;
+
+    if (vhost_vdpa_one_time_request(dev)) {
+        return 0;
+    }
+
+    vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
+                               VIRTIO_CONFIG_S_DRIVER);
+
+    return 0;
 }
 
 const VhostOps vdpa_ops = {
