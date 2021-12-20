@@ -614,11 +614,27 @@ static int vhost_vdpa_set_vring_addr(struct vhost_dev *dev,
     return vhost_vdpa_call(dev, VHOST_SET_VRING_ADDR, addr);
 }
 
-static int vhost_vdpa_set_vring_num(struct vhost_dev *dev,
-                                      struct vhost_vring_state *ring)
+static int vhost_vdpa_set_dev_vring_num(struct vhost_dev *dev,
+                                        struct vhost_vring_state *ring)
 {
     trace_vhost_vdpa_set_vring_num(dev, ring->index, ring->num);
     return vhost_vdpa_call(dev, VHOST_SET_VRING_NUM, ring);
+}
+
+static int vhost_vdpa_set_vring_num(struct vhost_dev *dev,
+                                    struct vhost_vring_state *ring)
+{
+    struct vhost_vdpa *v = dev->opaque;
+
+    if (v->shadow_vqs_enabled) {
+        /*
+         * Vring num was set at device start. SVQ num is handled by VirtQueue
+         * code
+         */
+        return 0;
+    }
+
+    return vhost_vdpa_set_dev_vring_num(dev, ring);
 }
 
 static int vhost_vdpa_set_vring_base(struct vhost_dev *dev,
