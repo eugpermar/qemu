@@ -881,12 +881,19 @@ static void vhost_psvq_free(gpointer svq)
     vhost_svq_free(svq);
 }
 
+static int vhost_vdpa_get_max_queue_size(struct vhost_dev *dev,
+                                         uint16_t *qsize)
+{
+    return vhost_vdpa_call(dev, VHOST_VDPA_GET_VRING_NUM, qsize);
+}
+
 static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
                                Error **errp)
 {
     g_autoptr(GPtrArray) shadow_vqs = NULL;
     uint64_t dev_features;
     uint64_t svq_features;
+    uint16_t qsize;
     int r;
     bool ok;
 
@@ -906,9 +913,14 @@ static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
         return -1;
     }
 
+    r = vhost_vdpa_get_max_queue_size(hdev, &qsize);
+    if (unlikely(r)) {
+        qsize = 256;
+    }
+
     shadow_vqs = g_ptr_array_new_full(hdev->nvqs, vhost_psvq_free);
     for (unsigned n = 0; n < hdev->nvqs; ++n) {
-        VhostShadowVirtqueue *svq = vhost_svq_new(hdev);
+        VhostShadowVirtqueue *svq = vhost_svq_new(hdev, qsize);
 
         if (unlikely(!svq)) {
             error_setg(errp, "Cannot create svq %u", n);

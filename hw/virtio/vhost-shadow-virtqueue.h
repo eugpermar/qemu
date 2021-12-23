@@ -36,7 +36,7 @@ size_t vhost_svq_device_area_size(const VhostShadowVirtqueue *svq);
 void vhost_svq_start(VhostShadowVirtqueue *svq, int svq_kick_fd);
 void vhost_svq_stop(VhostShadowVirtqueue *svq);
 
-VhostShadowVirtqueue *vhost_svq_new(struct vhost_dev *dev);
+VhostShadowVirtqueue *vhost_svq_new(struct vhost_dev *dev, uint16_t qsize);
 
 void vhost_svq_free(VhostShadowVirtqueue *vq);
 

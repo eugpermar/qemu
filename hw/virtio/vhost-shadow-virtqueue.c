@@ -308,11 +308,17 @@ void vhost_svq_stop(VhostShadowVirtqueue *svq)
     event_notifier_set_handler(&svq->svq_kick, NULL);
 }
 
-/*
- * Creates vhost shadow virtqueue, and instruct vhost device to use the shadow
- * methods and file descriptors.
+/**
+ * Creates a new vhost shadow virtqueue
+ *
+ * @dev Owner vhost device
+ * @qsize Shadow VirtQueue size
+ *
+ * Returns the new virtqueue or NULL.
+ *
+ * In case of error, reason is reported through error_report.
  */
-VhostShadowVirtqueue *vhost_svq_new(struct vhost_dev *dev)
+VhostShadowVirtqueue *vhost_svq_new(struct vhost_dev *dev, uint16_t num)
 {
     g_autofree VhostShadowVirtqueue *svq = g_new0(VhostShadowVirtqueue, 1);
     int r;
