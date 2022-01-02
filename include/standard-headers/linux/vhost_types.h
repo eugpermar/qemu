@@ -87,7 +87,8 @@ struct vhost_msg {
 
 struct vhost_msg_v2 {
 	uint32_t type;
-	uint32_t reserved;
+	uint16_t asid;
+	uint16_t reserved;
 	union {
 		struct vhost_iotlb_msg iotlb;
 		uint8_t padding[64];

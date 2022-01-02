@@ -418,6 +418,7 @@ static void vhost_handle_guest_kick(VhostShadowVirtqueue *svq)
                 /* VQ is broken, just return and ignore any other kicks */
                 return;
             }
+            fprintf(stderr, "[eperezma %s:%d] q=%d\n", __func__, __LINE__, virtio_get_queue_index(svq->vq));
             vhost_svq_kick(svq);
         }
 
@@ -515,6 +516,7 @@ static void vhost_svq_flush(VhostShadowVirtqueue *svq,
             virtqueue_fill(vq, elem, elem->len, i++);
         }
 
+        fprintf(stderr, "[eperezma %s:%d] q=%d", __func__, __LINE__, virtio_get_queue_index(svq->vq));
         virtqueue_flush(vq, i);
         event_notifier_set(&svq->svq_call);
 

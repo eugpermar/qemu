@@ -73,11 +73,15 @@ static bool vhost_vdpa_listener_skipped_section(MemoryRegionSection *section,
 }
 
 static int vhost_vdpa_dma_map(struct vhost_vdpa *v, hwaddr iova, hwaddr size,
-                              void *vaddr, bool readonly)
+                              void *vaddr, uint16_t asid, bool readonly)
 {
     struct vhost_msg_v2 msg = {};
     int fd = v->device_fd;
     int ret = 0;
+
+    if (v->dev->backend_cap & (0x1ULL << VHOST_BACKEND_F_IOTLB_ASID)) {
+        msg.asid = asid;
+    }
 
     msg.type = v->msg_type;
     msg.iotlb.iova = iova;
@@ -176,7 +180,7 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
                                            MemoryRegionSection *section)
 {
     struct vhost_vdpa *v = container_of(listener, struct vhost_vdpa, listener);
-    hwaddr iova;
+    hwaddr iova, iova_cvq;
     Int128 llend, llsize;
     void *vaddr;
     int ret;
@@ -210,7 +214,7 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
                                          vaddr, section->readonly);
 
     llsize = int128_sub(llend, int128_make64(iova));
-    if (v->shadow_vqs_enabled) {
+    /* if (v->shadow_vqs_enabled) { */
         DMAMap mem_region = {
             .translated_addr = (hwaddr)vaddr,
             .size = int128_get64(llsize) - 1,
@@ -220,12 +224,18 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
         int r = vhost_iova_tree_map_alloc(v->iova_tree, &mem_region);
         assert(r == IOVA_OK);
 
-        iova = mem_region.iova;
-    }
+        iova_cvq = mem_region.iova;
+    /* } */
 
     vhost_vdpa_iotlb_batch_begin_once(v);
     ret = vhost_vdpa_dma_map(v, iova, int128_get64(llsize),
-                             vaddr, section->readonly);
+                             vaddr, 0, section->readonly);
+    if (ret) {
+        error_report("vhost vdpa map fail!");
+        goto fail;
+    }
+    ret = vhost_vdpa_dma_map(v, iova_cvq, int128_get64(llsize),
+                             vaddr, 1, section->readonly);
     if (ret) {
         error_report("vhost vdpa map fail!");
         goto fail;
@@ -494,7 +504,8 @@ static int vhost_vdpa_set_backend_cap(struct vhost_dev *dev)
 {
     uint64_t features;
     uint64_t f = 0x1ULL << VHOST_BACKEND_F_IOTLB_MSG_V2 |
-        0x1ULL << VHOST_BACKEND_F_IOTLB_BATCH;
+        /* 0x1ULL << VHOST_BACKEND_F_IOTLB_BATCH | */
+        0x1ULL << VHOST_BACKEND_F_IOTLB_ASID;
     int r;
 
     if (vhost_vdpa_call(dev, VHOST_GET_BACKEND_FEATURES, &features)) {
@@ -694,11 +705,11 @@ static int vhost_vdpa_get_vring_base(struct vhost_dev *dev,
     struct vhost_vdpa *v = dev->opaque;
     int ret;
 
-    if (v->shadow_vqs_enabled) {
-        VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs,
+    if (v->shadow_vqs_enabled && dev->vq_index == 2) {
+        /* VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs,
                                                       ring->index);
 
-        ring->num = vhost_svq_get_last_used_idx(svq);
+        ring->num = vhost_svq_get_last_used_idx(svq); */
         return 0;
     }
 
@@ -718,10 +729,10 @@ static int vhost_vdpa_set_vring_kick(struct vhost_dev *dev,
                                        struct vhost_vring_file *file)
 {
     struct vhost_vdpa *v = dev->opaque;
-    int vdpa_idx = vhost_vdpa_get_vq_index(dev, file->index);
+    int vdpa_idx = file->index - dev->vq_index;
 
     v->kick_fd[vdpa_idx] = file->fd;
-    if (v->shadow_vqs_enabled) {
+    if (v->shadow_vqs_enabled && dev->vq_index == 2) {
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, vdpa_idx);
         vhost_svq_set_svq_kick_fd(svq, file->fd);
         return 0;
@@ -742,8 +753,8 @@ static int vhost_vdpa_set_vring_call(struct vhost_dev *dev,
 {
     struct vhost_vdpa *v = dev->opaque;
 
-    if (v->shadow_vqs_enabled) {
-        int vdpa_idx = vhost_vdpa_get_vq_index(dev, file->index);
+    if (v->shadow_vqs_enabled && dev->vq_index == 2) {
+        int vdpa_idx = file->index - dev->vq_index;
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, vdpa_idx);
 
         vhost_svq_set_guest_call_notifier(svq, file->fd);
@@ -811,8 +822,8 @@ static bool vhost_vdpa_svq_map_ring(struct vhost_vdpa *v, const DMAMap *needle,
     }
 
     off = needle->translated_addr - result->translated_addr;
-    r = vhost_vdpa_dma_map(v, result->iova + off, needle->size,
-                           (void *)needle->translated_addr, readonly);
+    r = vhost_vdpa_dma_map(v, result->iova + off, result->size,
+                           (void *)needle->translated_addr, 1, readonly);
     return r == 0;
 }
 
@@ -840,7 +851,7 @@ static bool vhost_vdpa_svq_map_rings(struct vhost_dev *dev,
         .translated_addr = svq_addr.desc_user_addr,
         .size = driver_size,
     };
-    ok = vhost_vdpa_svq_map_ring(v, &needle, true);
+    ok = vhost_vdpa_svq_map_ring(v, &needle, false);
     if (unlikely(!ok)) {
         return false;
     }
@@ -892,7 +903,7 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 
     if (started) {
         vhost_vdpa_host_notifiers_init(dev);
-        if (v->shadow_vqs_enabled) {
+        if (v->shadow_vqs_enabled && dev->vq_index == 2) {
             for (unsigned i = 0; i < dev->nvqs; ++i) {
                 VirtQueue *vq = virtio_get_queue(dev->vdev, dev->vq_index + i);
                 VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs,
@@ -942,10 +953,10 @@ static int vhost_vdpa_get_dev_features(struct vhost_dev *dev,
 
 static int vhost_vdpa_get_features(struct vhost_dev *dev, uint64_t *features)
 {
-    struct vhost_vdpa *v = dev->opaque;
+    // struct vhost_vdpa *v = dev->opaque;
     int ret = vhost_vdpa_get_dev_features(dev, features);
 
-    if (ret == 0 && v->shadow_vqs_enabled) {
+    if (ret == 0 /* && v->shadow_vqs_enabled */) {
         /* Filter only features that SVQ can offer to guest */
         vhost_svq_valid_guest_features(features);
     }
@@ -956,14 +967,14 @@ static int vhost_vdpa_get_features(struct vhost_dev *dev, uint64_t *features)
 static int vhost_vdpa_set_features(struct vhost_dev *dev,
                                    uint64_t features)
 {
-    struct vhost_vdpa *v = dev->opaque;
+    // struct vhost_vdpa *v = dev->opaque;
     int ret;
 
     if (vhost_vdpa_one_time_request(dev)) {
         return 0;
     }
 
-    if (v->shadow_vqs_enabled) {
+    /* if (v->shadow_vqs_enabled) { */
         uint64_t dev_features, svq_features, acked_features;
         bool ok;
 
@@ -997,7 +1008,7 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
         }
 
         features = acked_features;
-    }
+    /* } */
 
     trace_vhost_vdpa_set_features(dev, features);
     ret = vhost_vdpa_call(dev, VHOST_SET_FEATURES, &features);
@@ -1054,9 +1065,9 @@ static int vhost_vdpa_vq_get_addr(struct vhost_dev *dev,
 
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
 
-    if (v->shadow_vqs_enabled) {
+    if (v->shadow_vqs_enabled && dev->vq_index == 2) {
         struct vhost_vring_addr svq_addr;
-        int idx = vhost_vdpa_get_vq_index(dev, addr->index);
+        int idx = addr->index - dev->vq_index;
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, idx);
 
         vhost_svq_get_vring_addr(svq, &svq_addr);
@@ -1106,12 +1117,13 @@ static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
                                Error **errp)
 {
     g_autoptr(GPtrArray) shadow_vqs = NULL;
-    uint64_t dev_features;
-    uint64_t svq_features;
+    // uint64_t dev_features;
+    // uint64_t svq_features;
     uint16_t qsize;
     int r;
-    bool ok;
+    // bool ok;
 
+#if 0
     /* TODO can we use hdev->features at this point? */
     r = vhost_vdpa_get_dev_features(hdev, &dev_features);
     if (r != 0) {
@@ -1128,6 +1140,7 @@ static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
         return -1;
     }
 
+#endif
     r = vhost_vdpa_get_max_queue_size(hdev, &qsize);
     if (unlikely(r)) {
         qsize = 256;

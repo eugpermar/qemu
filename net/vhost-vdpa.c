@@ -290,7 +290,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     int vdpa_device_fd;
     NetClientState **ncs, *nc;
     int queue_pairs, i, has_cvq = 0;
-    g_autoptr(VhostIOVATree) iova_tree = NULL;
+    VhostIOVATree *iova_tree = NULL;
     struct vhost_vdpa_iova_range iova_range;
 
     assert(netdev->type == NET_CLIENT_DRIVER_VHOST_VDPA);
@@ -320,7 +320,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, opts->x_svq, true,
+                                     vdpa_device_fd, i, 2, /* opts->x_svq */ false, true,
                                      iova_range, iova_tree, errp);
         if (!ncs[i])
             goto err;
