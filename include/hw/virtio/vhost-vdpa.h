@@ -28,6 +28,7 @@ typedef struct vhost_vdpa {
     int device_fd;
     int index;
     uint32_t msg_type;
+    uint32_t address_space_id;
     /* Must be a vq group different than any other vhost dev */
     bool independent_vq_group;
     bool iotlb_batch_begin_sent;
