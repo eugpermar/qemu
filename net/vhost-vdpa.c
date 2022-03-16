@@ -70,6 +70,30 @@ const int vdpa_feature_bits[] = {
     VHOST_INVALID_FEATURE_BIT
 };
 
+/** Supported device specific feature bits with SVQ */
+static const uint64_t vdpa_svq_device_features =
+    BIT_ULL(VIRTIO_NET_F_CSUM) |
+    BIT_ULL(VIRTIO_NET_F_GUEST_CSUM) |
+    BIT_ULL(VIRTIO_NET_F_CTRL_GUEST_OFFLOADS) |
+    BIT_ULL(VIRTIO_NET_F_MTU) |
+    BIT_ULL(VIRTIO_NET_F_MAC) |
+    BIT_ULL(VIRTIO_NET_F_GUEST_TSO4) |
+    BIT_ULL(VIRTIO_NET_F_GUEST_TSO6) |
+    BIT_ULL(VIRTIO_NET_F_GUEST_ECN) |
+    BIT_ULL(VIRTIO_NET_F_GUEST_UFO) |
+    BIT_ULL(VIRTIO_NET_F_HOST_TSO4) |
+    BIT_ULL(VIRTIO_NET_F_HOST_TSO6) |
+    BIT_ULL(VIRTIO_NET_F_HOST_ECN) |
+    BIT_ULL(VIRTIO_NET_F_HOST_UFO) |
+    BIT_ULL(VIRTIO_NET_F_MRG_RXBUF) |
+    BIT_ULL(VIRTIO_NET_F_STATUS) |
+    BIT_ULL(VIRTIO_NET_F_CTRL_VQ) |
+    BIT_ULL(VIRTIO_NET_F_MQ) |
+    BIT_ULL(VIRTIO_F_ANY_LAYOUT) |
+    BIT_ULL(VIRTIO_NET_F_CTRL_MAC_ADDR) |
+    BIT_ULL(VIRTIO_NET_F_RSC_EXT) |
+    BIT_ULL(VIRTIO_NET_F_STANDBY);
+
 VHostNetState *vhost_vdpa_get_vhost_net(NetClientState *nc)
 {
     VhostVDPAState *s = DO_UPCAST(VhostVDPAState, nc, nc);
@@ -128,7 +152,11 @@ err_init:
 static void vhost_vdpa_cleanup(NetClientState *nc)
 {
     VhostVDPAState *s = DO_UPCAST(VhostVDPAState, nc, nc);
+    struct vhost_dev *dev = &s->vhost_net->dev;
 
+    if (dev->vq_index + dev->nvqs == dev->vq_index_end) {
+        vhost_iova_tree_delete(s->vhost_vdpa.iova_tree);
+    }
     if (s->vhost_net) {
         vhost_net_cleanup(s->vhost_net);
         g_free(s->vhost_net);
@@ -329,6 +357,7 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
         s->vhost_vdpa.shadow_vq_ops = &vhost_vdpa_net_svq_ops;
         s->vhost_vdpa.svq_copy_descs = true;
         s->vhost_vdpa.independent_vq_group = true;
+        s->vhost_vdpa.address_space_id = 1;
         error_setg(&s->vhost_vdpa.migration_blocker, "Guest have CVQ");
     }
     ret = vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs);
@@ -345,6 +374,17 @@ static int vhost_vdpa_get_features(int fd, uint64_t *features, Error **errp)
     if (ret) {
         error_setg_errno(errp, errno,
                          "Fail to query features from vhost-vDPA device");
+    }
+    return ret;
+}
+
+static int vhost_vdpa_get_backend_features(int fd, uint64_t *features,
+                                           Error **errp)
+{
+    int ret = ioctl(fd, VHOST_GET_BACKEND_FEATURES, features);
+    if (ret) {
+        error_setg_errno(errp, errno,
+            "Fail to query backend features from vhost-vDPA device");
     }
     return ret;
 }
@@ -382,16 +422,63 @@ static int vhost_vdpa_get_max_queue_pairs(int fd, uint64_t features,
     return 1;
 }
 
+/**
+ * Check vdpa device to support CVQ group asid 1
+ *
+ * @vdpa_device_fd: Vdpa device fd
+ * @dev_name: Name of the device (for error reporting)
+ */
+static bool vhost_vdpa_check_cvq_svq(int vdpa_device_fd, const char *dev_name)
+{
+    uint64_t backend_features;
+    unsigned num_as;
+    int r;
+    Error *errp = NULL;
+
+    r = vhost_vdpa_get_backend_features(vdpa_device_fd, &backend_features,
+                                        &errp);
+    if (unlikely(r)) {
+        error_prepend(&errp, "Cannot get backend features: ");
+        goto err;
+    }
+
+    if (unlikely(!(backend_features & VHOST_BACKEND_F_IOTLB_ASID))) {
+        error_setg(&errp, "Device without IOTLB_ASID feature");
+        goto err;
+    }
+
+    r = ioctl(vdpa_device_fd, VHOST_VDPA_GET_AS_NUM, &num_as);
+    if (unlikely(r)) {
+        error_setg_errno(&errp, errno,
+                         "Cannot retrieve number of supported ASs");
+        goto err;
+    }
+    if (unlikely(num_as < 2)) {
+        error_setg(&errp, "Insufficient number of ASs (%u, min: 2)", num_as);
+        goto err;
+    }
+
+    return true;
+
+err:
+    warn_reportf_err(errp,
+        "Cannot configure SVQ on CVQ of dev %s, device not migratable: ",
+        dev_name);
+    return false;
+}
+
 int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
                         NetClientState *peer, Error **errp)
 {
     const NetdevVhostVDPAOptions *opts;
+    struct vhost_vdpa_iova_range iova_range;
     uint64_t features;
     int vdpa_device_fd;
     g_autofree NetClientState **ncs = NULL;
     g_autoptr(VhostIOVATree) iova_tree = NULL;
     NetClientState *nc;
     int queue_pairs, r, i, has_cvq = 0;
+    bool svq_cvq = false;
 
     assert(netdev->type == NET_CLIENT_DRIVER_VHOST_VDPA);
     opts = &netdev->u.vhost_vdpa;
@@ -417,9 +504,26 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         return queue_pairs;
     }
 
-    if (opts->x_svq) {
-        struct vhost_vdpa_iova_range iova_range;
+    if (has_cvq) {
+        /* TODO: Add migration blocker */
+        svq_cvq = vhost_vdpa_check_cvq_svq(vdpa_device_fd, name);
+    }
+
+    if (svq_cvq) {
         vhost_vdpa_get_iova_range(vdpa_device_fd, &iova_range);
+
+        uint64_t invalid_dev_features =
+            features & ~vdpa_svq_device_features &
+            /* Transport are all accepted at this point */
+            ~MAKE_64BIT_MASK(VIRTIO_TRANSPORT_F_START,
+                             VIRTIO_TRANSPORT_F_END - VIRTIO_TRANSPORT_F_START);
+
+        if (invalid_dev_features) {
+            error_setg(errp, "vdpa svq does not work with features 0x%" PRIx64,
+                       invalid_dev_features);
+            goto err_svq;
+        }
+
         iova_tree = vhost_iova_tree_new(iova_range.first, iova_range.last);
     }
 
@@ -427,7 +531,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, true, opts->x_svq,
+                                     vdpa_device_fd, i, 2, true, false,
                                      iova_tree);
         if (!ncs[i])
             goto err;
@@ -436,11 +540,13 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     if (has_cvq) {
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                  vdpa_device_fd, i, 1, false,
-                                 opts->x_svq, iova_tree);
+                                 svq_cvq, iova_tree);
         if (!nc)
             goto err;
     }
 
+    /* iova_tree ownership belongs to last NetClientState */
+    g_steal_pointer(&iova_tree);
     return 0;
 
 err:
@@ -449,6 +555,8 @@ err:
             qemu_del_net_client(ncs[i]);
         }
     }
+
+err_svq:
     qemu_close(vdpa_device_fd);
 
     return -1;

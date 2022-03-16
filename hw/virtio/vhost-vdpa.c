@@ -1205,13 +1205,12 @@ static int vhost_vdpa_set_address_space_id(struct vhost_dev *dev)
 static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 {
     struct vhost_vdpa *v = dev->opaque;
-    int r;
     bool ok;
-    int r = 0;
 
     trace_vhost_vdpa_dev_start(dev, started);
 
     if (started) {
+        int r;
         vhost_vdpa_host_notifiers_init(dev);
         if (v->independent_vq_group && !vhost_vdpa_is_independent_group(dev)) {
             return -1;
