@@ -28,6 +28,8 @@ typedef struct vhost_vdpa {
     int device_fd;
     int index;
     uint32_t msg_type;
+    /* Must be a vq group different than any other vhost dev */
+    bool independent_vq_group;
     bool iotlb_batch_begin_sent;
     MemoryListener listener;
     struct vhost_vdpa_iova_range iova_range;

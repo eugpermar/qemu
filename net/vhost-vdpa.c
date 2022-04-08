@@ -255,6 +255,7 @@ static NetClientState *net_vhost_vdpa_init(NetClientState *peer,
     if (!is_datapath) {
         s->vhost_vdpa.shadow_vq_ops = &vhost_vdpa_net_svq_ops;
         s->vhost_vdpa.svq_copy_descs = true;
+        s->vhost_vdpa.independent_vq_group = true;
     }
     ret = vhost_vdpa_add(nc, (void *)&s->vhost_vdpa, queue_pair_index, nvqs);
     if (ret) {
