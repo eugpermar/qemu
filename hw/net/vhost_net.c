@@ -339,8 +339,9 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
     }
 
     for (i = 0; i < nvhosts; i++) {
+        bool cvq_idx = i >= data_queue_pairs;
 
-        if (i < data_queue_pairs) {
+        if (!cvq_idx) {
             peer = qemu_get_peer(ncs, i);
         } else { /* Control Virtqueue */
             peer = qemu_get_peer(ncs, n->max_queue_pairs);
