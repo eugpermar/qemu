@@ -17,6 +17,12 @@
 
 typedef struct SVQElement {
     VirtQueueElement elem;
+
+    /* SVQ IOVA address of in buffer and out buffer if cloned */
+    hwaddr in_iova, out_iova;
+
+    /* Length of in buffer */
+    size_t in_len;
 } SVQElement;
 
 typedef void (*VirtQueueElementCallback)(VirtIODevice *vdev,
@@ -99,6 +105,9 @@ typedef struct VhostShadowVirtqueue {
 
     /* Next head to consume from the device */
     uint16_t last_used_idx;
+
+    /* Copy each descriptor to QEMU iova */
+    bool copy_descs;
 } VhostShadowVirtqueue;
 
 bool vhost_svq_valid_features(uint64_t features, Error **errp);
@@ -116,6 +125,7 @@ void vhost_svq_stop(VhostShadowVirtqueue *svq);
 
 VhostShadowVirtqueue *vhost_svq_new(VhostIOVATree *iova_map,
                                     const VhostShadowVirtqueueOps *ops,
+                                    bool copy_descs,
                                     const VhostShadowVirtqueueMapOps *map_ops,
                                     void *map_ops_opaque);
 
