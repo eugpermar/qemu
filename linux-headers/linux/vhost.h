@@ -171,4 +171,7 @@
 #define VHOST_VDPA_SET_GROUP_ASID	_IOW(VHOST_VIRTIO, 0x7C, \
 					     struct vhost_vring_state)
 
+/* Stop or resume a device so it does not process virtqueue requests anymore */
+#define VHOST_VDPA_STOP                 _IOW(VHOST_VIRTIO, 0x7D, int)
+
 #endif
