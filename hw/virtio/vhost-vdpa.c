@@ -409,6 +409,14 @@ static int vhost_vdpa_get_dev_features(struct vhost_dev *dev,
     return ret;
 }
 
+static int vhost_vdpa_get_dev_vring_base(struct vhost_dev *dev,
+                                         struct vhost_vring_state *ring)
+{
+    int ret = vhost_vdpa_call(dev, VHOST_GET_VRING_BASE, ring);
+    trace_vhost_vdpa_get_vring_base(dev, ring->index, ring->num);
+    return ret;
+}
+
 static int vhost_vdpa_svq_map(hwaddr iova, hwaddr size, void *vaddr,
                               bool readonly, void *opaque)
 {
@@ -1361,7 +1369,6 @@ static int vhost_vdpa_get_vring_base(struct vhost_dev *dev,
 {
     struct vhost_vdpa *v = dev->opaque;
     int vdpa_idx = ring->index - dev->vq_index;
-    int ret;
 
     if (v->shadow_vqs_enabled) {
         VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, vdpa_idx);
@@ -1378,9 +1385,7 @@ static int vhost_vdpa_get_vring_base(struct vhost_dev *dev,
         return 0;
     }
 
-    ret = vhost_vdpa_call(dev, VHOST_GET_VRING_BASE, ring);
-    trace_vhost_vdpa_get_vring_base(dev, ring->index, ring->num);
-    return ret;
+    return vhost_vdpa_get_dev_vring_base(dev, ring);
 }
 
 static int vhost_vdpa_set_vring_kick(struct vhost_dev *dev,
