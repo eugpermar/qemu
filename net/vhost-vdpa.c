@@ -231,10 +231,13 @@ static int vhost_vdpa_start_control_svq(VhostShadowVirtqueue *svq,
         .index = virtio_get_queue_index(svq->vq),
         .num = 1,
     };
+    struct vhost_vring_state base = {
+        .index = virtio_get_queue_index(svq->vq),
+    };
     struct vhost_vdpa *v = dev->opaque;
     VirtIONet *n = VIRTIO_NET(dev->vdev);
     uint64_t features = dev->vdev->host_features;
-    int r;
+    int r, stop;
     size_t num = 0;
 
     assert(dev->vhost_ops->backend_type == VHOST_BACKEND_TYPE_VDPA);
@@ -243,6 +246,18 @@ static int vhost_vdpa_start_control_svq(VhostShadowVirtqueue *svq,
     if (r < 0) {
         return -errno;
     }
+
+    stop = 1;
+    r = ioctl(v->device_fd, VHOST_VDPA_STOP, &stop);
+    assert(r == 0);
+
+    r = ioctl(v->device_fd, VHOST_GET_VRING_BASE, &base);
+    assert(r == 0);
+    assert(base.num == 0);
+
+    stop = 0;
+    r = ioctl(v->device_fd, VHOST_VDPA_STOP, &stop);
+    assert(r == 0);
 
     if (features & BIT_ULL(VIRTIO_NET_F_CTRL_MAC_ADDR)) {
         const struct virtio_net_ctrl_hdr ctrl = {
@@ -280,6 +295,18 @@ static int vhost_vdpa_start_control_svq(VhostShadowVirtqueue *svq,
         assert(used <= num);
         num -= used;
     }
+
+    stop = 1;
+    r = ioctl(v->device_fd, VHOST_VDPA_STOP, &stop);
+    assert(r == 0);
+
+    r = ioctl(v->device_fd, VHOST_GET_VRING_BASE, &base);
+    assert(r == 0);
+    assert(base.num == 1);
+
+    stop = 0;
+    r = ioctl(v->device_fd, VHOST_VDPA_STOP, &stop);
+    assert(r == 0);
 
     return 0;
 }
