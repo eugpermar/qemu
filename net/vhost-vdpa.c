@@ -496,6 +496,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     NetClientState *nc;
     int queue_pairs, r, i, has_cvq = 0;
     g_autoptr(VhostIOVATree) iova_tree = NULL;
+    bool x_cvq_svq = true, x_svq = true;
     ERRP_GUARD();
 
     assert(netdev->type == NET_CLIENT_DRIVER_VHOST_VDPA);
@@ -521,7 +522,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         qemu_close(vdpa_device_fd);
         return queue_pairs;
     }
-    if (opts->x_cvq_svq || opts->x_svq) {
+    if (x_cvq_svq || x_svq) {
         vhost_vdpa_get_iova_range(vdpa_device_fd, &iova_range);
 
         uint64_t invalid_dev_features =
@@ -537,7 +538,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         }
     }
 
-    if (opts->x_cvq_svq) {
+    if (x_cvq_svq) {
         if (!has_cvq) {
             error_setg(errp, "Cannot use x-cvq-svq with a device without cvq");
             goto err_svq;
@@ -549,7 +550,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
             goto err_svq;
         }
     }
-    if (opts->x_svq) {
+    if (x_svq) {
         iova_tree = vhost_iova_tree_new(iova_range.first, iova_range.last);
     }
 
@@ -557,7 +558,7 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
-                                     vdpa_device_fd, i, 2, true, opts->x_svq,
+                                     vdpa_device_fd, i, 2, true, x_svq,
                                      iova_tree);
         if (!ncs[i])
             goto err;
@@ -566,33 +567,15 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     if (has_cvq) {
         g_autoptr(VhostIOVATree) cvq_iova_tree = NULL;
 
-        if (opts->x_cvq_svq) {
-            cvq_iova_tree = vhost_iova_tree_new(iova_range.first,
-                                                iova_range.last);
-        } else if (opts->x_svq) {
-            cvq_iova_tree = vhost_iova_tree_acquire(iova_tree);
-        }
+        cvq_iova_tree = vhost_iova_tree_acquire(iova_tree);
 
         nc = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                  vdpa_device_fd, i, 1, false,
-                                 opts->x_cvq_svq || opts->x_svq,
+                                 x_cvq_svq || x_svq,
                                  cvq_iova_tree);
         if (!nc)
             goto err;
 
-        if (opts->x_cvq_svq) {
-            struct vhost_vring_state asid = {
-                .index = 1,
-                .num = 1,
-            };
-
-            r = ioctl(vdpa_device_fd, VHOST_VDPA_SET_GROUP_ASID, &asid);
-            if (unlikely(r)) {
-                error_setg_errno(errp, errno,
-                                 "Cannot set cvq group independent asid");
-                goto err;
-            }
-        }
     }
 
     return 0;
