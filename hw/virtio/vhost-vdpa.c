@@ -79,9 +79,6 @@ static int vhost_vdpa_dma_map(struct vhost_vdpa *v, hwaddr iova, hwaddr size,
     int ret = 0;
 
     msg.type = v->msg_type;
-    if (v->dev->backend_cap & BIT_ULL(VHOST_BACKEND_F_IOTLB_ASID)) {
-        msg.asid = v->dev->address_space_id;
-    }
     msg.iotlb.iova = iova;
     msg.iotlb.size = size;
     msg.iotlb.uaddr = (uint64_t)(uintptr_t)vaddr;
@@ -108,9 +105,6 @@ static int vhost_vdpa_dma_unmap(struct vhost_vdpa *v, hwaddr iova,
     int fd = v->device_fd;
     int ret = 0;
 
-    if (v->dev->backend_cap & BIT_ULL(VHOST_BACKEND_F_IOTLB_ASID)) {
-        msg.asid = v->dev->address_space_id;
-    }
     msg.type = v->msg_type;
     msg.iotlb.iova = iova;
     msg.iotlb.size = size;
@@ -130,16 +124,11 @@ static int vhost_vdpa_dma_unmap(struct vhost_vdpa *v, hwaddr iova,
 
 static void vhost_vdpa_listener_begin_batch(struct vhost_vdpa *v)
 {
-    struct vhost_dev *dev = v->dev;
     int fd = v->device_fd;
     struct vhost_msg_v2 msg = {
         .type = v->msg_type,
         .iotlb.type = VHOST_IOTLB_BATCH_BEGIN,
     };
-
-    if (dev->backend_cap & BIT_ULL(VHOST_BACKEND_F_IOTLB_ASID)) {
-        msg.asid = v->dev->address_space_id;
-    }
 
     trace_vhost_vdpa_listener_begin_batch(v, fd, msg.type, msg.asid,
                                           msg.iotlb.type);
@@ -172,10 +161,6 @@ static void vhost_vdpa_listener_commit(MemoryListener *listener)
 
     if (!v->iotlb_batch_begin_sent) {
         return;
-    }
-
-    if (dev->backend_cap & BIT_ULL(VHOST_BACKEND_F_IOTLB_ASID)) {
-        msg.asid = v->dev->address_space_id;
     }
 
     msg.type = v->msg_type;
@@ -1137,6 +1122,7 @@ static bool vhost_vdpa_svqs_stop(struct vhost_dev *dev)
     return true;
 }
 
+#if 0
 static int vhost_vdpa_get_vring_group(struct vhost_dev *dev,
                                       struct vhost_vring_state *state)
 {
@@ -1244,17 +1230,18 @@ static int vhost_vdpa_set_address_space_id(struct vhost_dev *dev)
     }
     return ret;
 }
+#endif
 
 static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 {
     struct vhost_vdpa *v = dev->opaque;
     bool ok;
-    int r = 0;
 
     trace_vhost_vdpa_dev_start(dev, started);
 
     if (started) {
         vhost_vdpa_host_notifiers_init(dev);
+#if 0
         if (dev->independent_vq_group &&
             !vhost_dev_is_independent_group(dev)) {
             return -1;
@@ -1263,6 +1250,7 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
         if (unlikely(r)) {
             return r;
         }
+#endif
         ok = vhost_vdpa_svqs_start(dev);
         if (unlikely(!ok)) {
             return -1;
