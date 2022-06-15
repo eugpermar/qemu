@@ -640,6 +640,10 @@ static int vhost_vdpa_set_mem_table(struct vhost_dev *dev,
     return 0;
 }
 
+void vhost_virtqueue_stop(struct vhost_dev *dev,
+                                    struct VirtIODevice *vdev,
+                                    struct vhost_virtqueue *vq,
+                                    unsigned idx);
 static int vhost_vdpa_set_features(struct vhost_dev *dev,
                                    uint64_t features)
 {

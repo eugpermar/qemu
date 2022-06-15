@@ -1193,7 +1193,11 @@ fail_alloc_desc:
     return r;
 }
 
-static void vhost_virtqueue_stop(struct vhost_dev *dev,
+void vhost_virtqueue_stop(struct vhost_dev *dev,
+                                    struct VirtIODevice *vdev,
+                                    struct vhost_virtqueue *vq,
+                                    unsigned idx);
+void vhost_virtqueue_stop(struct vhost_dev *dev,
                                     struct VirtIODevice *vdev,
                                     struct vhost_virtqueue *vq,
                                     unsigned idx)
