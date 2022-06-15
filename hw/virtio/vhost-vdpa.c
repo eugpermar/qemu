@@ -641,10 +641,6 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
     struct vhost_vdpa *v = dev->opaque;
     int ret;
 
-    if (!vhost_vdpa_first_dev(dev)) {
-        return 0;
-    }
-
     if (v->shadow_vqs_enabled) {
         if ((v->acked_features ^ features) == BIT_ULL(VHOST_F_LOG_ALL)) {
             /*
@@ -654,11 +650,15 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
             v->acked_features = features;
             return 0;
         }
+    }
 
-        v->acked_features = features;
+    v->acked_features = features;
 
-        /* We must not ack _F_LOG if SVQ is enabled */
-        features &= ~BIT_ULL(VHOST_F_LOG_ALL);
+    /* We must not ack _F_LOG if SVQ is enabled */
+    features &= ~BIT_ULL(VHOST_F_LOG_ALL);
+
+    if (!vhost_vdpa_first_dev(dev)) {
+        return 0;
     }
 
     trace_vhost_vdpa_set_features(dev, features);
