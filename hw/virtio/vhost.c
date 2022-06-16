@@ -1073,7 +1073,11 @@ out:
     return ret;
 }
 
-static int vhost_virtqueue_start(struct vhost_dev *dev,
+int vhost_virtqueue_start(struct vhost_dev *dev,
+                                struct VirtIODevice *vdev,
+                                struct vhost_virtqueue *vq,
+                                unsigned idx);
+int vhost_virtqueue_start(struct vhost_dev *dev,
                                 struct VirtIODevice *vdev,
                                 struct vhost_virtqueue *vq,
                                 unsigned idx)

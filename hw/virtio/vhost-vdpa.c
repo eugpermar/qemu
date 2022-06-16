@@ -653,6 +653,10 @@ static int vhost_vdpa_set_mem_table(struct vhost_dev *dev,
     return 0;
 }
 
+int vhost_virtqueue_start(struct vhost_dev *dev,
+                                struct VirtIODevice *vdev,
+                                struct vhost_virtqueue *vq,
+                                unsigned idx);
 void vhost_virtqueue_stop(struct vhost_dev *dev,
                                     struct VirtIODevice *vdev,
                                     struct vhost_virtqueue *vq,
