@@ -699,6 +699,7 @@ static struct vhost_vdpa *first_vhost_dev(struct vhost_vdpa *v) {
     return v;
 }
 
+static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started);
 int vhost_virtqueue_start(struct vhost_dev *dev,
                                 struct VirtIODevice *vdev,
                                 struct vhost_virtqueue *vq,
@@ -712,29 +713,64 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
 {
     struct vhost_vdpa *v = dev->opaque;
     int ret;
+    bool svq = features & BIT_ULL(VHOST_F_LOG_ALL);
+    bool send_dev_features = !v->acked_features;
 
-    if (v->shadow_vqs_enabled) {
-        if ((v->acked_features ^ features) == BIT_ULL(VHOST_F_LOG_ALL)) {
-            /*
-             * QEMU is just trying to enable or disable logging. SVQ handles
-             * this sepparately, so no need to forward this.
-             */
-            v->acked_features = features;
-            return 0;
+    if (svq && !v->shadow_vqs_enabled) {
+        /* Need to enable SVQ. Stop VQ and get state */
+        if (vhost_vdpa_first_dev(dev)) {
+            int stop = 1;
+            ret = ioctl(v->device_fd, VHOST_VDPA_STOP, &stop);
+            assert(ret == 0);
+        }
+
+        for (unsigned i = 0; i < dev->nvqs; ++i) {
+            vhost_virtqueue_stop(dev, dev->vdev, dev->vqs + i, dev->vq_index + i);
         }
     }
 
-    v->acked_features = features;
 
-    /* We must not ack _F_LOG if SVQ is enabled */
-    features &= ~BIT_ULL(VHOST_F_LOG_ALL);
+    struct vhost_vdpa *first = first_vhost_dev(v);
+    if (svq && !first->shadow_vqs_enabled && vhost_vdpa_last_dev(dev)) {
+        for (struct vhost_vdpa *i = first; i != v; i = QTAILQ_NEXT(i, entry)) {
+            ret = vhost_vdpa_dev_start(i->dev, false);
+            assert(ret == 0);
+        }
+        ret = vhost_vdpa_dev_start(dev, false);
+        assert(ret == 0);
+        v->shadow_vqs_enabled = true;
 
-    if (!vhost_vdpa_first_dev(dev)) {
+        /* Start devices in SVQ mode */
+        ret = vhost_vdpa_set_dev_features(dev, first->acked_features & ~BIT_ULL(VHOST_F_LOG_ALL));
+        assert(ret == 0);
+
+        for (struct vhost_vdpa *i = first; i != v; i = QTAILQ_NEXT(i, entry)) {
+            i->shadow_vqs_enabled = true;
+            for (unsigned j = 0; j < i->dev->nvqs; ++j) {
+                ret = vhost_virtqueue_start(i->dev, i->dev->vdev, i->dev->vqs + j, i->dev->vq_index + j);
+                assert(ret == 0);
+            }
+            ret = vhost_vdpa_dev_start(i->dev, true);
+            assert(ret == 0);
+        }
+        for (unsigned j = 0; j < dev->nvqs; ++j) {
+            ret = vhost_virtqueue_start(dev, dev->vdev, dev->vqs + j, dev->vq_index + j);
+            assert(ret == 0);
+        }
+        ret = vhost_vdpa_dev_start(dev, true);
+        assert(ret == 0);
         return 0;
     }
 
+    v->acked_features = features;
+    if (!vhost_vdpa_first_dev(dev) || !send_dev_features) {
+        return 0;
     }
 
+    /* We must not ack _F_LOG if SVQ is enabled */
+    if (v->shadow_vqs_enabled) {
+        features &= ~BIT_ULL(VHOST_F_LOG_ALL);
+    }
     return vhost_vdpa_set_dev_features(dev, features);
 }
 
