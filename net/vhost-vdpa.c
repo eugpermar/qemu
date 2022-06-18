@@ -479,7 +479,6 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
     NetClientState *nc;
     int queue_pairs, r, i, has_cvq = 0;
     bool svq_cvq = false;
-    QTAILQ_HEAD(, vhost_vdpa) tq = QTAILQ_HEAD_INITIALIZER(tq);
 
     assert(netdev->type == NET_CLIENT_DRIVER_VHOST_VDPA);
     opts = &netdev->u.vhost_vdpa;
@@ -537,9 +536,13 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
         if (!ncs[i])
             goto err;
 
-        VhostVDPAState *s;
+        VhostVDPAState *s, *s0;
         s = DO_UPCAST(VhostVDPAState, nc, ncs[i]);
-        QTAILQ_INSERT_TAIL(&tq, &s->vhost_vdpa, entry);
+        if (i == 0) {
+            QTAILQ_INIT(&s->vhost_vdpa.tq);
+        }
+        s0 = DO_UPCAST(VhostVDPAState, nc, ncs[0]);
+        QTAILQ_INSERT_TAIL(&s0->vhost_vdpa.tq, &s->vhost_vdpa, entry);
     }
 
     if (has_cvq) {
@@ -549,6 +552,10 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
                                  iova_tree);
         if (!nc)
             goto err;
+        VhostVDPAState *s, *s0;
+        s = DO_UPCAST(VhostVDPAState, nc, nc);
+        s0 = DO_UPCAST(VhostVDPAState, nc, ncs[0]);
+        QTAILQ_INSERT_TAIL(&s0->vhost_vdpa.tq, &s->vhost_vdpa, entry);
     }
 
     /* iova_tree ownership belongs to last NetClientState */

@@ -43,6 +43,7 @@ typedef struct vhost_vdpa {
     const VhostShadowVirtqueueOps *shadow_vq_ops;
     struct vhost_dev *dev;
     Error *migration_blocker;
+    QTAILQ_HEAD(, vhost_vdpa) tq;
     QTAILQ_ENTRY(vhost_vdpa) entry;
     VhostVDPAHostNotifier notifier[VIRTIO_QUEUE_MAX];
 } VhostVDPA;
