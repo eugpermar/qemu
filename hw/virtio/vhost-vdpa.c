@@ -461,6 +461,9 @@ static int vhost_vdpa_init_svq(struct vhost_dev *hdev, struct vhost_vdpa *v,
     bool ok;
 
     shadow_vqs = g_ptr_array_new_full(hdev->nvqs, vhost_svq_free);
+    if (hdev->nvqs == 2) {
+        goto end;
+    }
     for (unsigned n = 0; n < hdev->nvqs; ++n) {
         g_autoptr(VhostShadowVirtqueue) svq = vhost_svq_new(v->iova_tree,
                                                        v->shadow_vq_ops,
