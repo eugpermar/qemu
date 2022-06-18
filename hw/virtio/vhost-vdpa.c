@@ -1360,14 +1360,16 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
 static int vhost_vdpa_set_log_base(struct vhost_dev *dev, uint64_t base,
                                      struct vhost_log *log)
 {
-    struct vhost_vdpa *v = dev->opaque;
-    if (v->shadow_vqs_enabled || !vhost_vdpa_first_dev(dev)) {
+    /* struct vhost_vdpa *v = dev->opaque; */
+    /* if (v->shadow_vqs_enabled || !vhost_vdpa_first_dev(dev)) { */
         return 0;
+#if 0
     }
 
     trace_vhost_vdpa_set_log_base(dev, base, log->size, log->refcnt, log->fd,
                                   log->log);
     return vhost_vdpa_call(dev, VHOST_SET_LOG_BASE, &base);
+#endif
 }
 
 static int vhost_vdpa_set_vring_addr(struct vhost_dev *dev,
