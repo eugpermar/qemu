@@ -743,6 +743,19 @@ static int vhost_vdpa_set_features(struct vhost_dev *dev,
         assert(ret == 0);
         v->shadow_vqs_enabled = true;
 
+        for (struct vhost_vdpa *i = first; i != v; i = QTAILQ_NEXT(i, entry)) {
+            while (i->shadow_vqs->len < i->dev->nvqs) {
+                VhostShadowVirtqueue *svq = vhost_svq_new(i->iova_tree,
+                                                               i->shadow_vq_ops,
+                                                               i->svq_copy_descs,
+                                                               &vhost_vdpa_svq_map_ops,
+                                                               i);
+
+                assert(svq);
+                g_ptr_array_add(i->shadow_vqs, svq);
+            }
+        }
+
         /* Start devices in SVQ mode */
         ret = vhost_vdpa_set_dev_features(dev, first->acked_features & ~BIT_ULL(VHOST_F_LOG_ALL));
         assert(ret == 0);
