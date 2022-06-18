@@ -224,6 +224,21 @@ static void vhost_vdpa_listener_region_add(MemoryListener *listener,
                                          vaddr, section->readonly);
 
     llsize = int128_sub(llend, int128_make64(iova));
+    if (v->shadow_vqs_enabled) {
+        DMAMap mem_region = {
+            .translated_addr = (hwaddr)(uintptr_t)vaddr,
+            .size = int128_get64(llsize) - 1,
+            .perm = IOMMU_ACCESS_FLAG(true, section->readonly),
+        };
+
+        int r = vhost_iova_tree_map_alloc(v->iova_tree, &mem_region);
+        if (unlikely(r != IOVA_OK)) {
+            error_report("Can't allocate a mapping (%d)", r);
+            goto fail;
+        }
+
+        iova = mem_region.iova;
+    }
     vhost_vdpa_iotlb_batch_begin_once(v);
     ret = vhost_vdpa_dma_map(v, 0, iova, int128_get64(llsize),
                              vaddr, section->readonly);
@@ -275,6 +290,20 @@ static void vhost_vdpa_listener_region_del(MemoryListener *listener,
 
     llsize = int128_sub(llend, int128_make64(iova));
 
+    if (v->shadow_vqs_enabled) {
+        const DMAMap *result;
+        const void *vaddr = memory_region_get_ram_ptr(section->mr) +
+            section->offset_within_region +
+            (iova - section->offset_within_address_space);
+        DMAMap mem_region = {
+            .translated_addr = (hwaddr)(uintptr_t)vaddr,
+            .size = int128_get64(llsize) - 1,
+        };
+
+        result = vhost_iova_tree_find_iova(v->iova_tree, &mem_region);
+        iova = result->iova;
+        vhost_iova_tree_remove(v->iova_tree, &mem_region);
+    }
     vhost_vdpa_iotlb_batch_begin_once(v);
     ret = vhost_vdpa_dma_unmap(v, 0, iova, int128_get64(llsize));
     if (ret) {
@@ -659,6 +688,14 @@ static int vhost_vdpa_set_mem_table(struct vhost_dev *dev,
     }
 
     return 0;
+}
+
+static struct vhost_vdpa *first_vhost_dev(struct vhost_vdpa *v) {
+    while (v->index) {
+        v = QTAILQ_PREV(v, entry);
+    }
+
+    return v;
 }
 
 int vhost_virtqueue_start(struct vhost_dev *dev,
@@ -1286,9 +1323,10 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
         return 0;
     }
 
+    struct vhost_vdpa *first = first_vhost_dev(v);
     if (started) {
         int r;
-        memory_listener_register(&v->listener, &address_space_memory);
+        memory_listener_register(&first->listener, &address_space_memory);
         r = vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_DRIVER_OK);
         if (unlikely(r)) {
             return r;
@@ -1312,7 +1350,7 @@ static int vhost_vdpa_dev_start(struct vhost_dev *dev, bool started)
         vhost_vdpa_reset_device(dev);
         vhost_vdpa_add_status(dev, VIRTIO_CONFIG_S_ACKNOWLEDGE |
                                    VIRTIO_CONFIG_S_DRIVER);
-        memory_listener_unregister(&v->listener);
+        memory_listener_unregister(&first->listener);
 
     }
 
