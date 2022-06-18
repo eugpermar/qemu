@@ -3408,7 +3408,12 @@ static unsigned int virtio_queue_packed_get_last_avail_idx(VirtIODevice *vdev,
 static uint16_t virtio_queue_split_get_last_avail_idx(VirtIODevice *vdev,
                                                       int n)
 {
-    return vdev->vq[n].last_avail_idx;
+    /*
+     * TODO: We can undo this hack if we virtqueue_unpop all descriptors before
+     * get last_avail_idx
+     */
+    // return vdev->vq[n].last_avail_idx;
+    return vdev->vq[n].used_idx;
 }
 
 unsigned int virtio_queue_get_last_avail_idx(VirtIODevice *vdev, int n)

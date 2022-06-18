@@ -849,7 +849,7 @@ void vhost_svq_stop(VhostShadowVirtqueue *svq)
             }
 
             if (!svq_elem->not_from_guest) {
-                virtqueue_detach_element(svq->vq, &svq_elem->elem, 0);
+                virtqueue_unpop(svq->vq, &svq_elem->elem, 0);
             }
         }
     }
@@ -860,7 +860,7 @@ void vhost_svq_stop(VhostShadowVirtqueue *svq)
             vhost_svq_unmap_elem(svq, next_avail_elem, 0, false);
         }
         if (!next_avail_elem->not_from_guest) {
-            virtqueue_detach_element(svq->vq, &next_avail_elem->elem, 0);
+            virtqueue_unpop(svq->vq, &next_avail_elem->elem, 0);
         }
     }
     svq->vq = NULL;
