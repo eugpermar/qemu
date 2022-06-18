@@ -1415,11 +1415,8 @@ static int vhost_vdpa_get_vring_base(struct vhost_dev *dev,
                                        struct vhost_vring_state *ring)
 {
     struct vhost_vdpa *v = dev->opaque;
-    int vdpa_idx = ring->index - dev->vq_index;
 
     if (v->shadow_vqs_enabled) {
-        VhostShadowVirtqueue *svq = g_ptr_array_index(v->shadow_vqs, vdpa_idx);
-
         /*
          * Setting base as last used idx, so destination will see as available
          * all the entries that the device did not use, including the in-flight
@@ -1428,7 +1425,8 @@ static int vhost_vdpa_get_vring_base(struct vhost_dev *dev,
          * TODO: This is ok for networking, but other kinds of devices might
          * have problems with these retransmissions.
          */
-        ring->num = svq->last_used_idx;
+        // ring->num = svq->last_used_idx;
+        ring->num = virtio_queue_get_last_avail_idx(dev->vdev, ring->index);
         return 0;
     }
 
