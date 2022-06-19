@@ -59,7 +59,7 @@ const int vdpa_feature_bits[] = {
     VIRTIO_NET_F_GUEST_ANNOUNCE,
     VIRTIO_NET_F_CTRL_MAC_ADDR,
     VIRTIO_NET_F_RSS,
-    VIRTIO_NET_F_MQ,
+    // VIRTIO_NET_F_MQ,
     VIRTIO_NET_F_CTRL_VQ,
     VIRTIO_F_IOMMU_PLATFORM,
     VIRTIO_F_RING_PACKED,
@@ -529,6 +529,8 @@ int net_init_vhost_vdpa(const Netdev *netdev, const char *name,
 
     ncs = g_malloc0(sizeof(*ncs) * queue_pairs);
 
+    /* SVQ only works with 1pq atm. */
+    assert(queue_pairs == 1);
     for (i = 0; i < queue_pairs; i++) {
         ncs[i] = net_vhost_vdpa_init(peer, TYPE_VHOST_VDPA, name,
                                      vdpa_device_fd, i, 2, true, opts->x_svq,
