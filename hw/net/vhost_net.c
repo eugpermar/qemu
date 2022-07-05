@@ -274,6 +274,13 @@ static int vhost_net_start_one(struct vhost_net *net,
             }
         }
     }
+
+    if (net->nc->info->type == NET_CLIENT_DRIVER_VHOST_VDPA) {
+        r = vhost_vdpa_start(net->nc);
+        if (r < 0) {
+            goto fail;
+        }
+    }
     return 0;
 fail:
     file.fd = -1;
@@ -373,6 +380,7 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
         r = vhost_net_start_one(get_vhost_net(peer), dev);
 
         if (r < 0) {
+            vhost_net_stop_one(get_vhost_net(peer), dev);
             goto err_start;
         }
     }
