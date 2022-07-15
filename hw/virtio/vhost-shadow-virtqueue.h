@@ -16,7 +16,7 @@
 #include "hw/virtio/vhost-iova-tree.h"
 
 typedef struct SVQDescState {
-    VirtQueueElement *elem;
+    void *data;
 
     /*
      * Number of descriptors exposed to the device. May or may not match
@@ -115,7 +115,7 @@ void vhost_svq_push_elem(VhostShadowVirtqueue *svq,
                          const VirtQueueElement *elem, uint32_t len);
 int vhost_svq_add(VhostShadowVirtqueue *svq, const struct iovec *out_sg,
                   size_t out_num, const struct iovec *in_sg, size_t in_num,
-                  VirtQueueElement *elem);
+                  void *data);
 size_t vhost_svq_poll(VhostShadowVirtqueue *svq);
 
 void vhost_svq_set_svq_kick_fd(VhostShadowVirtqueue *svq, int svq_kick_fd);

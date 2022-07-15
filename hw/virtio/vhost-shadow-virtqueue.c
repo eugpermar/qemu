@@ -237,7 +237,7 @@ static void vhost_svq_kick(VhostShadowVirtqueue *svq)
  */
 int vhost_svq_add(VhostShadowVirtqueue *svq, const struct iovec *out_sg,
                   size_t out_num, const struct iovec *in_sg, size_t in_num,
-                  VirtQueueElement *elem)
+                  void *data)
 {
     unsigned qemu_head;
     unsigned ndescs = in_num + out_num;
@@ -252,7 +252,7 @@ int vhost_svq_add(VhostShadowVirtqueue *svq, const struct iovec *out_sg,
         return -EINVAL;
     }
 
-    svq->desc_state[qemu_head].elem = elem;
+    svq->desc_state[qemu_head].data = data;
     svq->desc_state[qemu_head].ndescs = ndescs;
     vhost_svq_kick(svq);
     return 0;
@@ -389,8 +389,7 @@ static uint16_t vhost_svq_last_desc_of_chain(const VhostShadowVirtqueue *svq,
     return i;
 }
 
-static VirtQueueElement *vhost_svq_get_buf(VhostShadowVirtqueue *svq,
-                                           uint32_t *len)
+static void *vhost_svq_get_buf(VhostShadowVirtqueue *svq, uint32_t *len)
 {
     const vring_used_t *used = svq->vring.used;
     vring_used_elem_t used_elem;
@@ -413,7 +412,7 @@ static VirtQueueElement *vhost_svq_get_buf(VhostShadowVirtqueue *svq,
         return NULL;
     }
 
-    if (unlikely(!svq->desc_state[used_elem.id].elem)) {
+    if (unlikely(!svq->desc_state[used_elem.id].data)) {
         qemu_log_mask(LOG_GUEST_ERROR,
             "Device %s says index %u is used, but it was not available",
             svq->vdev->name, used_elem.id);
@@ -426,7 +425,7 @@ static VirtQueueElement *vhost_svq_get_buf(VhostShadowVirtqueue *svq,
     svq->free_head = used_elem.id;
 
     *len = used_elem.len;
-    return g_steal_pointer(&svq->desc_state[used_elem.id].elem);
+    return g_steal_pointer(&svq->desc_state[used_elem.id].data);
 }
 
 /**
@@ -498,8 +497,7 @@ size_t vhost_svq_poll(VhostShadowVirtqueue *svq)
 {
     do {
         uint32_t len;
-        VirtQueueElement *elem = vhost_svq_get_buf(svq, &len);
-        if (elem) {
+        if (vhost_svq_get_buf(svq, &len)) {
             return len;
         }
 
@@ -658,8 +656,12 @@ void vhost_svq_stop(VhostShadowVirtqueue *svq)
     vhost_svq_flush(svq, false);
 
     for (unsigned i = 0; i < svq->vring.num; ++i) {
+        /*
+         * We know .data is an element because external callers of
+         * vhost_svq_add use active polling, not SVQ
+         */
         g_autofree VirtQueueElement *elem = NULL;
-        elem = g_steal_pointer(&svq->desc_state[i].elem);
+        elem = g_steal_pointer(&svq->desc_state[i].data);
         if (elem) {
             virtqueue_detach_element(svq->vq, elem, 0);
         }
