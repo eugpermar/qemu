@@ -375,13 +375,20 @@ int vhost_net_start(VirtIODevice *dev, NetClientState *ncs,
         if (r < 0) {
             goto err_start;
         }
+    }
+
+    for (int j = 0; j < nvhosts; j++) {
+        if (j < data_queue_pairs) {
+            peer = qemu_get_peer(ncs, j);
+        } else {
+            peer = qemu_get_peer(ncs, n->max_queue_pairs);
+        }
 
         if (peer->vring_enable) {
             /* restore vring enable state */
             r = vhost_set_vring_enable(peer, peer->vring_enable);
 
             if (r < 0) {
-                vhost_net_stop_one(get_vhost_net(peer), dev);
                 goto err_start;
             }
         }
