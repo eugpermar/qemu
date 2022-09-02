@@ -94,6 +94,7 @@ static const uint64_t vdpa_svq_device_features =
     BIT_ULL(VIRTIO_NET_F_MRG_RXBUF) |
     BIT_ULL(VIRTIO_NET_F_STATUS) |
     BIT_ULL(VIRTIO_NET_F_CTRL_VQ) |
+    BIT_ULL(VIRTIO_NET_F_CTRL_VLAN) |
     BIT_ULL(VIRTIO_NET_F_MQ) |
     BIT_ULL(VIRTIO_F_ANY_LAYOUT) |
     BIT_ULL(VIRTIO_NET_F_CTRL_MAC_ADDR) |
@@ -536,6 +537,16 @@ static bool vhost_vdpa_net_cvq_validate_cmd(const void *out_buf, size_t len)
         default:
             qemu_log_mask(LOG_GUEST_ERROR, "%s: invalid mq cmd %u\n",
                           __func__, ctrl.cmd);
+        };
+        break;
+    case VIRTIO_NET_CTRL_VLAN:
+        switch (ctrl->cmd) {
+        case VIRTIO_NET_CTRL_VLAN_ADD:
+        case VIRTIO_NET_CTRL_VLAN_DEL:
+            return true;
+        default:
+            qemu_log_mask(LOG_GUEST_ERROR, "%s: invalid vlan cmd %u\n",
+                          __func__, ctrl->cmd);
         };
         break;
     default:
