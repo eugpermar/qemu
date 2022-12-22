@@ -26,12 +26,14 @@
 #include <err.h>
 #include "standard-headers/linux/virtio_net.h"
 #include "monitor/monitor.h"
+#include "migration/blocker.h"
 #include "hw/virtio/vhost.h"
 
 /* Todo:need to add the multiqueue support here */
 typedef struct VhostVDPAState {
     NetClientState nc;
     struct vhost_vdpa vhost_vdpa;
+    Error *migration_blocker;
     VHostNetState *vhost_net;
 
     /* Control commands shadow buffers */
@@ -437,7 +439,10 @@ static int vhost_vdpa_net_cvq_start(NetClientState *nc)
     }
     if (!(backend_features & VHOST_BACKEND_F_IOTLB_ASID) ||
         !vhost_vdpa_net_valid_svq_features(v->dev->features, NULL)) {
-        return 0;
+        error_setg(&s->migration_blocker,
+                   "vdpa device %s does not support ASID",
+                   nc->name);
+        goto out;
     }
 
     /*
@@ -457,7 +462,10 @@ static int vhost_vdpa_net_cvq_start(NetClientState *nc)
         }
 
         if (group == cvq_group) {
-            return 0;
+            error_setg(&s->migration_blocker,
+                "vdpa %s vq %d group %"PRId64" is the same as cvq group "
+                "%"PRId64, nc->name, i, group, cvq_group);
+            goto out;
         }
     }
 
@@ -470,7 +478,15 @@ static int vhost_vdpa_net_cvq_start(NetClientState *nc)
     s->vhost_vdpa.address_space_id = VHOST_VDPA_NET_CVQ_ASID;
 
 out:
-    if (!s->vhost_vdpa.shadow_vqs_enabled) {
+    if (s->migration_blocker) {
+        Error *errp = NULL;
+        r = migrate_add_blocker(s->migration_blocker, &errp);
+        if (unlikely(r == 0)) {
+            g_clear_pointer(&s->migration_blocker, error_free);
+            error_report_err(errp);
+            return r;
+        }
+    } else if (!s->vhost_vdpa.shadow_vqs_enabled) {
         return 0;
     }
 
@@ -507,6 +523,11 @@ static void vhost_vdpa_net_cvq_stop(NetClientState *nc)
     if (s->vhost_vdpa.shadow_vqs_enabled) {
         vhost_vdpa_cvq_unmap_buf(&s->vhost_vdpa, s->cvq_cmd_out_buffer);
         vhost_vdpa_cvq_unmap_buf(&s->vhost_vdpa, s->status);
+    }
+
+    if (s->migration_blocker) {
+        migrate_del_blocker(s->migration_blocker);
+        g_clear_pointer(&s->migration_blocker, error_free);
     }
 
     vhost_vdpa_net_client_stop(nc);
