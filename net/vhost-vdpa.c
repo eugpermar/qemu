@@ -489,7 +489,7 @@ dma_map_err:
 
 static int vhost_vdpa_net_cvq_start(NetClientState *nc)
 {
-    VhostVDPAState *s;
+    VhostVDPAState *s, *s0;
     struct vhost_vdpa *v;
     uint64_t backend_features;
     int64_t cvq_group;
@@ -574,9 +574,9 @@ out:
         return r;
     }
 
-    if (s->always_svq) {
+    s0 = vhost_vdpa_net_first_nc_vdpa(s);
+    if (s0->vhost_vdpa.iova_tree) {
         /* SVQ is already configured for all virtqueues */
-        VhostVDPAState *s0 = vhost_vdpa_net_first_nc_vdpa(s);
         v->iova_tree = s0->vhost_vdpa.iova_tree;
     } else {
         v->iova_tree = vhost_iova_tree_new(v->iova_range.first,
