@@ -569,10 +569,9 @@ out:
         if (unlikely(r == 0)) {
             g_clear_pointer(&s->migration_blocker, error_free);
             error_report_err(errp);
-            return r;
         }
-    } else if (!s->vhost_vdpa.shadow_vqs_enabled) {
-        return 0;
+
+        return r;
     }
 
     if (s->always_svq) {
